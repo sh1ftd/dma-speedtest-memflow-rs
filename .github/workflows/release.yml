@@ -53,7 +53,7 @@ jobs:
         run: |
           mkdir release-package
           Copy-Item "target/release/dma-speedtest-memflow-rs.exe" -Destination "release-package/"
-          Copy-Item "OpenOCD" -Destination "release-package/OpenOCD" -Recurse
+          Copy-Item "DLL_DEP/*" -Destination "release-package/" -Recurse
           Compress-Archive -Path "release-package/*" -DestinationPath "dma-speedtest-memflow-rs.zip"
         
       - name: Create Release
