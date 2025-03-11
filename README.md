@@ -57,8 +57,6 @@ cargo build --release
 - Administrator privileges
 - Appropriate drivers for chosen connector
 
-## License
-
-AGPL-3.0 License
+## Credits
 
 Built with [Rust](https://www.rust-lang.org/) and [memflow](https://github.com/memflow/memflow)
