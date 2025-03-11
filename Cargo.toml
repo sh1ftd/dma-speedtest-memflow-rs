@@ -1,0 +1,42 @@
+cargo-features = ["profile-rustflags"]
+
+[package]
+    name = "dma-speedtest-memflow-rs"
+    version = "0.1.0"
+    edition = "2021"
+
+[dependencies]
+    memflow = "0.2"
+    memflow-win32 = "0.2"
+    memflow-native = "0.2"
+    anyhow = "1.0.97"
+    clap = { version = "4.5.32", features = ["derive"] }
+    tokio = { version = "1.44.0", features = ["full"] }
+    parking_lot = "0.12"
+
+[profile.dev]
+    overflow-checks = true
+    debug = true
+    strip = false
+    panic = "unwind"
+    codegen-units = 1024
+    incremental = true
+    opt-level = 0
+    lto = false
+
+[profile.release]
+    overflow-checks = true
+    debug = false
+    strip = "symbols"
+    panic = "abort"
+    codegen-units = 1
+    incremental = false
+    opt-level = "z"
+    lto = "fat"
+    rustflags = ["-C", "target-cpu=x86-64", "-C", "strip=symbols"]
+
+[profile.release.package."*"]
+    overflow-checks = true
+    debug = false
+    codegen-units = 1
+    opt-level = "z"
