@@ -3,7 +3,7 @@ cargo-features = ["profile-rustflags"]
 [package]
     name = "dma-speedtest-memflow-rs"
     version = "0.1.0"
-    edition = "2021"
+    edition = "2024"
 
 [dependencies]
     memflow = "0.2"

@@ -52,14 +52,14 @@ jobs:
       - name: Create Release Package
         run: |
           mkdir release-package
-          Copy-Item "target/release/dma-tools-rs.exe" -Destination "release-package/"
+          Copy-Item "target/release/dma-speedtest-memflow-rs.exe" -Destination "release-package/"
           Copy-Item "OpenOCD" -Destination "release-package/OpenOCD" -Recurse
-          Compress-Archive -Path "release-package/*" -DestinationPath "dma-tools-rs.zip"
+          Compress-Archive -Path "release-package/*" -DestinationPath "dma-speedtest-memflow-rs.zip"
         
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dma-tools-rs.zip
+          files: dma-speedtest-memflow-rs.zip
           generate_release_notes: true
           tag_name: v${{ steps.get_version.outputs.version }}
         env:
