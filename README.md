@@ -5,7 +5,6 @@ A Windows command-line tool for benchmarking DMA (Direct Memory Access) read/wri
 ## Features
 
 - Measure real-world DMA read/write performance and latency
-- Compare different DMA hardware configurations
 - Comprehensive speed testing (sequential/random/bulk reads)
 - Detailed performance metrics (throughput, latency, error rates)
 - Support for multiple connector types
