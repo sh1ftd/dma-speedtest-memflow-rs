@@ -65,7 +65,7 @@ fn find_target_process(
     Ok(process)
 }
 
-fn find_module_address(process: &mut IntoProcessInstanceArcBox) -> Result<Address> {
+fn find_module_address(process: &mut IntoProcessInstanceArcBox<'_>) -> Result<Address> {
     println!("Looking for ntdll.dll module...");
     let addr = process.module_by_name(TARGET_MODULE)?.base;
     println!("Found ntdll.dll at address: {:x}", addr);

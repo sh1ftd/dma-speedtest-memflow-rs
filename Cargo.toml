@@ -2,16 +2,41 @@ cargo-features = ["profile-rustflags"]
 
 [package]
     name = "dma-speedtest-memflow-rs"
-    version = "0.1.0"
+
+    authors = ["Shifty <contact@shifty.cloud>"]
+    repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
+    license = "AGPL-3.0"
+    version = "0.1.1"
     edition = "2024"
+
+[lints.rust]
+    # Security
+    non_ascii_idents = "forbid"
+
+    # Deny old style Rust
+    rust_2018_idioms = { level = "deny", priority = -1 }
+    macro_use_extern_crate = "deny"
+    absolute_paths_not_starting_with_crate = "deny"
+
+    # Style and best practices
+    explicit_outlives_requirements = "warn"
+    missing_abi = "deny"
+    unused_lifetimes = "warn"
+    unused_macro_rules = "warn"
+    single_use_lifetimes = "warn"
+
+[lints.clippy]
+    unused_async = "deny"
+    undocumented_unsafe_blocks = "warn"
+    implicit_clone = "warn"
 
 [dependencies]
     memflow = "0.2"
     memflow-win32 = "0.2"
     memflow-native = "0.2"
     anyhow = "1.0.97"
-    clap = { version = "4.5.32", features = ["derive"] }
-    tokio = { version = "1.44.0", features = ["full"] }
+    clap = { version = "4.5.35", features = ["derive"] }
+    tokio = { version = "1.44.2", features = ["full"] }
     parking_lot = "0.12"
 
 [profile.dev]
