@@ -1,15 +1,15 @@
+// Prevents additional console window on Windows in release mode.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+mod speedtest;
+mod ui;
+
 use anyhow::Result;
-use clap::Parser;
-use dma_speedtest_memflow_rs::{Cli, SpeedTest};
-use std::time::Duration;
+use ui::app::SpeedTestApp;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Cli::parse();
-    let test = SpeedTest::new(args.connector, args.pcileech_device)?;
-    let duration = Duration::from_secs(args.duration);
-
-    test.run_speed_test(duration).await?;
-
+    let app = SpeedTestApp::new();
+    app.run()?;
     Ok(())
 }
