@@ -41,5 +41,4 @@ cargo build --release
 
 ## Credits
 
-Built with [Rust](https://www.rust-lang.org/), [memflow](https://github.com/memflow/memflow) and [egui](https://github.com/emilk/
-egui).
+Built with [Rust](https://www.rust-lang.org/), [memflow](https://github.com/memflow/memflow) and [egui](https://github.com/emilk/).
