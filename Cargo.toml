@@ -6,7 +6,7 @@ cargo-features = ["profile-rustflags"]
     authors = ["Shifty <contact@shifty.cloud>"]
     repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
     license = "AGPL-3.0"
-    version = "0.1.1"
+    version = "2.0.0"
     edition = "2024"
 
 [lints.rust]
@@ -32,19 +32,21 @@ cargo-features = ["profile-rustflags"]
 
 [dependencies]
     memflow = "0.2"
-    memflow-win32 = "0.2"
     memflow-native = "0.2"
     anyhow = "1.0.97"
-    clap = { version = "4.5.35", features = ["derive"] }
+    clap = { version = "4.5.47", features = ["derive"] }
     tokio = { version = "1.44.2", features = ["full"] }
     parking_lot = "0.12"
+    eframe = "0.32.3"
+    egui_plot = "0.33.0"
+    egui-phosphor = "0.10"
 
 [profile.dev]
     overflow-checks = true
     debug = true
     strip = false
     panic = "unwind"
-    codegen-units = 1024
+    codegen-units = 256
     incremental = true
     opt-level = 0
     lto = false
@@ -56,7 +58,7 @@ cargo-features = ["profile-rustflags"]
     panic = "abort"
     codegen-units = 1
     incremental = false
-    opt-level = "z"
+    opt-level = 3
     lto = "fat"
     rustflags = ["-C", "target-cpu=x86-64", "-C", "strip=symbols"]
 
@@ -64,4 +66,4 @@ cargo-features = ["profile-rustflags"]
     overflow-checks = true
     debug = false
     codegen-units = 1
-    opt-level = "z"
+    opt-level = 3

@@ -1,61 +1,45 @@
 # DMA Speedtest Memflow RS
 
-A Windows command-line tool for benchmarking DMA (Direct Memory Access) read/write speeds using the memflow framework.
+Windows GUI for benchmarking DMA read performance through the [memflow](https://github.com/memflow/memflow) framework. Targets `explorer.exe`/`ntdll.dll` and reports throughput, read rate, and latency in real time.
 
 ## Features
 
-- Measure real-world DMA read/write performance and latency
-- Comprehensive speed testing (sequential/random/bulk reads)
-- Detailed performance metrics (throughput, latency, error rates)
-- Support for multiple connector types
+- PCILeech and memflow-native connectors
+- Batch testing across configurable read sizes
+- Live plots for throughput, reads/s, and latency with per-size summaries
+- Embedded console, adjustable UI scale, and resizable plots
 
-## Command Line Usage
-
-```bash
-dma-speedtest-memflow-rs [OPTIONS]
-
-Options:
-  -c, --connector <CONNECTOR>       [default: pcileech] [possible values: pcileech, native, qemu, kvm]
-  --pcileech-device <DEVICE>        PCILeech device name [default: FPGA]
-  -d, --duration <DURATION>         Test duration in seconds [default: 5]
-  -h, --help                        Print help
-```
-
-### Connector Examples
+## Build from source
 
 ```bash
-# Physical DMA hardware
-dma-speedtest-memflow-rs --connector pcileech
-
-# Local testing
-dma-speedtest-memflow-rs --connector native
-
-# Virtual machine testing
-dma-speedtest-memflow-rs --connector qemu
-
-# KVM testing
-dma-speedtest-memflow-rs --connector kvm
-```
-
-## Quick Start
-
-```bash
-# Clone and build
 git clone https://github.com/sh1ftd/dma-speedtest-memflow-rs.git
 cd dma-speedtest-memflow-rs
 cargo build --release
-
-# Run
 ./target/release/dma-speedtest-memflow-rs
 ```
 
+## Usage
+
+1. Launch the binary.
+2. Pick a connector:
+   - `PCILeech` (requires hardware device identifier)
+   - `Native` (memflow-native for local testing)
+3. Set test duration (1–60 s) and enable desired read sizes.
+4. Start the test, observe results.
+
+## UI Overview
+
+- **Configuration:** connector selection, duration slider, read-size grid with bulk actions, UI scale input.
+- **Results:** throughput/reads/latency plots, min/avg/max tables, live metrics banner, chunk progress, console toggle.
+- **Console:** optional overlay listing size transitions, stats updates, and errors.
+
 ## Requirements
 
-- Windows OS (64-bit)
-- Compatible DMA hardware (for pcileech connector)
-- Administrator privileges
-- Appropriate drivers for chosen connector
+- Windows 10/11 64-bit
+- Rust toolchain for local builds
+- PCILeech-compatible hardware and drivers for physical testing
 
 ## Credits
 
-Built with [Rust](https://www.rust-lang.org/) and [memflow](https://github.com/memflow/memflow)
+Built with [Rust](https://www.rust-lang.org/), [memflow](https://github.com/memflow/memflow) and [egui](https://github.com/emilk/
+egui).
