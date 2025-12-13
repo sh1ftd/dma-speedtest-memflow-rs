@@ -4,6 +4,9 @@ use crate::ui::types::{PlotMetric, ResultsPanelParams, TestResults};
 use eframe::egui;
 use egui_plot::{Corner, Legend, Line, Plot, PlotPoints};
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 pub fn render_plot_column(
     ui: &mut egui::Ui,
     heading: &str,
@@ -75,6 +78,14 @@ fn render_plot(
     height: f32,
 ) {
     let (y_min, y_max) = y_range_for(results, metric);
+
+    #[cfg(feature = "branding")]
+    {
+        let (r, g, b) = branding::BACKGROUND_COLOR;
+        let alpha = (branding::UI_ELEMENT_OPACITY * 255.0) as u8;
+        ui.visuals_mut().extreme_bg_color = egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
+    }
+
     base_plot(plot_id, duration, width, height)
         .include_y(y_min)
         .include_y(y_max)

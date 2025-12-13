@@ -3,6 +3,9 @@ use crate::ui::types::ResultsPanelParams;
 use eframe::egui;
 use egui_phosphor::regular::*;
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 pub fn render_chunk_progress(ui: &mut egui::Ui, params: &ResultsPanelParams<'_>) {
     if !params.test_state.is_running && params.test_state.completed_chunks.is_empty() {
         return;
@@ -11,20 +14,30 @@ pub fn render_chunk_progress(ui: &mut egui::Ui, params: &ResultsPanelParams<'_>)
     ui.add_space(5.0);
     ui.label(format!("{CHART_BAR} Chunk Progress:"));
 
-    for (size, _) in params.test_sizes.iter().filter(|(_, enabled)| *enabled) {
-        let (progress, progress_text, color) = chunk_progress_row(params, *size);
-        let text_color = if progress_text.contains("Waiting") {
-            egui::Color32::WHITE
-        } else {
-            egui::Color32::BLACK
-        };
+    ui.scope(|ui| {
+        #[cfg(feature = "branding")]
+        {
+            let (r, g, b) = branding::BACKGROUND_COLOR;
+            let alpha = (branding::UI_ELEMENT_OPACITY * 255.0) as u8;
+            ui.visuals_mut().widgets.noninteractive.bg_fill =
+                egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
+        }
 
-        ui.add(
-            egui::ProgressBar::new(progress)
-                .text(egui::RichText::new(progress_text).color(text_color))
-                .fill(color),
-        );
-    }
+        for (size, _) in params.test_sizes.iter().filter(|(_, enabled)| *enabled) {
+            let (progress, progress_text, color) = chunk_progress_row(params, *size);
+            let text_color = if progress_text.contains("Waiting") {
+                egui::Color32::WHITE
+            } else {
+                egui::Color32::BLACK
+            };
+
+            ui.add(
+                egui::ProgressBar::new(progress)
+                    .text(egui::RichText::new(progress_text).color(text_color))
+                    .fill(color),
+            );
+        }
+    });
 }
 
 fn chunk_progress_row(

@@ -1,6 +1,9 @@
 use eframe::egui;
 use egui_phosphor::regular::*;
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 use crate::ui::helpers::{color_for_size, get_size_label};
 
 pub fn render_test_size_controls(test_sizes: &mut [(usize, bool)], ui: &mut egui::Ui) {
@@ -62,7 +65,16 @@ fn render_size_grid(test_sizes: &mut [(usize, bool)], ui: &mut egui::Ui) {
                 let fill = if is_selected {
                     ui.visuals().faint_bg_color
                 } else {
-                    ui.visuals().extreme_bg_color
+                    #[cfg(feature = "branding")]
+                    {
+                        let (r, g, b) = branding::BACKGROUND_COLOR;
+                        let alpha = (branding::UI_ELEMENT_OPACITY * 255.0) as u8;
+                        egui::Color32::from_rgba_unmultiplied(r, g, b, alpha)
+                    }
+                    #[cfg(not(feature = "branding"))]
+                    {
+                        ui.visuals().extreme_bg_color
+                    }
                 };
 
                 let button = egui::Button::new(text)

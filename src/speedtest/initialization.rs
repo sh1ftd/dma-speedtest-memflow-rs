@@ -17,20 +17,23 @@ pub(super) fn initialize_speedtest(
 }
 
 fn initialize_os(connector: Connector, pcileech_device: &str) -> Result<OsInstanceArcBox<'static>> {
-    let inventory = Inventory::scan();
+    let mut inventory = Inventory::scan();
 
     match connector {
-        Connector::Pcileech => initialize_pcileech(&inventory, pcileech_device),
+        Connector::Pcileech => initialize_pcileech(&mut inventory, pcileech_device),
         Connector::Native => Ok(memflow_native::create_os(
             &Default::default(), // os_cfg
             Default::default(),  // process_cfg
         )?),
         // Not tested
-        Connector::Kvm | Connector::Qemu => initialize_vm_connector(&inventory, &connector),
+        Connector::Kvm | Connector::Qemu => initialize_vm_connector(&mut inventory, &connector),
     }
 }
 
-fn initialize_pcileech(inventory: &Inventory, device: &str) -> Result<OsInstanceArcBox<'static>> {
+fn initialize_pcileech(
+    inventory: &mut Inventory,
+    device: &str,
+) -> Result<OsInstanceArcBox<'static>> {
     let args = Args::new().insert("device", device);
 
     let connector_args = ConnectorArgs::new(None, args, None);
@@ -60,7 +63,7 @@ fn find_module_address(process: &mut IntoProcessInstanceArcBox<'_>) -> Result<Ad
 
 // Not tested
 fn initialize_vm_connector(
-    inventory: &Inventory,
+    inventory: &mut Inventory,
     connector: &Connector,
 ) -> Result<OsInstanceArcBox<'static>> {
     let args = Args::new()

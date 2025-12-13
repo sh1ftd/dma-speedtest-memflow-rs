@@ -1,4 +1,11 @@
+const BRANDING_REQUIRED_FILES: &[&str] = &["src/branding/brand.webp"];
+
 fn main() {
+    // Check for branding files to trigger rebuilds
+    for file in BRANDING_REQUIRED_FILES {
+        println!("cargo:rerun-if-changed={}", file);
+    }
+
     // Basic Configuration
     println!("cargo:rustc-link-arg=/MERGE:.rdata=.text");
     println!("cargo:rustc-link-arg=/STACK:0x800000");

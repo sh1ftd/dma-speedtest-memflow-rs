@@ -1,6 +1,9 @@
 use eframe::egui;
 use egui_phosphor::regular::*;
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 pub fn render_ui_scale_controls(ui: &mut egui::Ui, ui_scale: &mut f32, ui_scale_text: &mut String) {
     ui.horizontal(|ui| {
         ui.label(format!("{MAGNIFYING_GLASS} UI Scale"));
@@ -15,16 +18,25 @@ pub fn render_ui_scale_controls(ui: &mut egui::Ui, ui_scale: &mut f32, ui_scale_
         }
 
         let text_width = 70.0;
-        if ui
-            .add_sized(
-                [text_width, ui.spacing().interact_size.y],
-                egui::TextEdit::singleline(ui_scale_text),
-            )
-            .changed()
-            && let Ok(parsed_scale) = ui_scale_text.parse::<f32>()
-        {
-            *ui_scale = parsed_scale.clamp(0.3, 3.0);
-        }
+        ui.scope(|ui| {
+            #[cfg(feature = "branding")]
+            {
+                let (r, g, b) = branding::BACKGROUND_COLOR;
+                let alpha = (branding::UI_ELEMENT_OPACITY * 255.0) as u8;
+                ui.visuals_mut().extreme_bg_color =
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
+            }
+            if ui
+                .add_sized(
+                    [text_width, ui.spacing().interact_size.y],
+                    egui::TextEdit::singleline(ui_scale_text),
+                )
+                .changed()
+                && let Ok(parsed_scale) = ui_scale_text.parse::<f32>()
+            {
+                *ui_scale = parsed_scale.clamp(0.3, 3.0);
+            }
+        });
 
         if ui.add_sized(button_size, egui::Button::new("+")).clicked() {
             *ui_scale = (*ui_scale + 0.1).min(3.0);

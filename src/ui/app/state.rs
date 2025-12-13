@@ -11,6 +11,9 @@ use super::super::constants::DEFAULT_PLOT_WIDTH;
 use super::super::types::PlotResizeDirection;
 use super::super::types::TestResults;
 
+#[cfg(feature = "branding")]
+use crate::branding::BrandingManager;
+
 pub struct SpeedTestApp {
     pub connector: Connector,
     pub pcileech_device: String,
@@ -24,6 +27,7 @@ pub struct SpeedTestApp {
     pub current_reads: u64,
     pub current_latency: f64,
     pub show_config: bool,
+    pub was_show_config: bool,
     #[allow(clippy::type_complexity)]
     pub stats_rx: Option<mpsc::Receiver<(f64, u64, f64, usize, f64)>>, // (throughput, reads_per_sec, elapsed_secs, read_size, latency_us)
     pub test_start_time: Option<Instant>,
@@ -44,6 +48,8 @@ pub struct SpeedTestApp {
     pub plot_resize_start_time: Option<std::time::Instant>,
     pub plot_resize_direction: PlotResizeDirection,
     pub plot_resize_last_repeat: Option<std::time::Instant>,
+    #[cfg(feature = "branding")]
+    pub branding_manager: BrandingManager,
 }
 
 impl Default for SpeedTestApp {
@@ -67,6 +73,7 @@ impl SpeedTestApp {
             current_reads: 0,
             current_latency: 0.0,
             show_config: true,
+            was_show_config: true,
             stats_rx: None,
             test_start_time: None,
             overall_test_start_time: None,
@@ -96,6 +103,8 @@ impl SpeedTestApp {
                 (65536, false),  // 64KB
                 (131072, false), // 128KB
             ],
+            #[cfg(feature = "branding")]
+            branding_manager: BrandingManager::new(),
         }
     }
 }

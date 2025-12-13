@@ -2,6 +2,9 @@ use crate::speedtest::Connector;
 use eframe::egui;
 use egui_phosphor::regular::*;
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 pub fn render_connector_section(
     ui: &mut egui::Ui,
     connector: &mut Connector,
@@ -66,6 +69,15 @@ fn render_pcileech_device(ui: &mut egui::Ui, pcileech_device: &mut String) {
     ui.horizontal(|ui| {
         let height = ui.spacing().interact_size.y;
         let width = 220.0;
-        ui.add_sized([width, height], egui::TextEdit::singleline(pcileech_device));
+        ui.scope(|ui| {
+            #[cfg(feature = "branding")]
+            {
+                let (r, g, b) = branding::BACKGROUND_COLOR;
+                let alpha = (branding::UI_ELEMENT_OPACITY * 255.0) as u8;
+                ui.visuals_mut().extreme_bg_color =
+                    egui::Color32::from_rgba_unmultiplied(r, g, b, alpha);
+            }
+            ui.add_sized([width, height], egui::TextEdit::singleline(pcileech_device));
+        });
     });
 }

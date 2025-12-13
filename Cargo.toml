@@ -1,69 +1,84 @@
 cargo-features = ["profile-rustflags"]
 
 [package]
-    name = "dma-speedtest-memflow-rs"
+name = "dma-speedtest-memflow-rs"
 
-    authors = ["Shifty <contact@shifty.cloud>"]
-    repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
-    license = "AGPL-3.0"
-    version = "2.0.0"
-    edition = "2024"
+authors = ["Shifty <contact@shifty.cloud>"]
+repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
+license = "AGPL-3.0"
+version = "2.1.0"
+edition = "2024"
 
 [lints.rust]
-    # Security
-    non_ascii_idents = "forbid"
+# Security
+non_ascii_idents = "forbid"
 
-    # Deny old style Rust
-    rust_2018_idioms = { level = "deny", priority = -1 }
-    macro_use_extern_crate = "deny"
-    absolute_paths_not_starting_with_crate = "deny"
+# Deny old style Rust
+rust_2018_idioms = { level = "deny", priority = -1 }
+macro_use_extern_crate = "deny"
+absolute_paths_not_starting_with_crate = "deny"
 
-    # Style and best practices
-    explicit_outlives_requirements = "warn"
-    missing_abi = "deny"
-    unused_lifetimes = "warn"
-    unused_macro_rules = "warn"
-    single_use_lifetimes = "warn"
+# Style and best practices
+explicit_outlives_requirements = "warn"
+missing_abi = "deny"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+single_use_lifetimes = "warn"
 
 [lints.clippy]
-    unused_async = "deny"
-    undocumented_unsafe_blocks = "warn"
-    implicit_clone = "warn"
+unused_async = "deny"
+undocumented_unsafe_blocks = "warn"
+implicit_clone = "warn"
 
 [dependencies]
-    memflow = "0.2"
-    memflow-native = "0.2"
-    anyhow = "1.0.97"
-    clap = { version = "4.5.47", features = ["derive"] }
-    tokio = { version = "1.44.2", features = ["full"] }
-    parking_lot = "0.12"
-    eframe = "0.32.3"
-    egui_plot = "0.33.0"
-    egui-phosphor = "0.10"
+memflow = "0.2.4"
+memflow-native = "0.2"
+anyhow = "1.0.97"
+clap = { version = "4.5.53", features = ["derive"] }
+tokio = { version = "1.48", features = ["full"] }
+parking_lot = "0.12"
+eframe = "0.33.3"
+egui_plot = "0.34.0"
+egui-phosphor = "0.11"
+image = "0.25"
+
+[features]
+# cargo build --release --features branding
+branding = []
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = [
+    "winuser",
+    "minwindef",
+    "windef",
+    "processthreadsapi",
+    "handleapi",
+    "winnt",
+] }
 
 [profile.dev]
-    overflow-checks = true
-    debug = true
-    strip = false
-    panic = "unwind"
-    codegen-units = 256
-    incremental = true
-    opt-level = 0
-    lto = false
+overflow-checks = true
+debug = true
+strip = false
+panic = "unwind"
+codegen-units = 256
+incremental = true
+opt-level = 0
+lto = false
 
 [profile.release]
-    overflow-checks = true
-    debug = false
-    strip = "symbols"
-    panic = "abort"
-    codegen-units = 1
-    incremental = false
-    opt-level = 3
-    lto = "fat"
-    rustflags = ["-C", "target-cpu=x86-64", "-C", "strip=symbols"]
+overflow-checks = true
+debug = false
+strip = "symbols"
+panic = "abort"
+codegen-units = 1
+incremental = false
+opt-level = 3
+lto = "fat"
+rustflags = ["-C", "target-cpu=x86-64", "-C", "strip=symbols"]
 
 [profile.release.package."*"]
-    overflow-checks = true
-    debug = false
-    codegen-units = 1
-    opt-level = 3
+overflow-checks = true
+debug = false
+codegen-units = 1
+opt-level = 3

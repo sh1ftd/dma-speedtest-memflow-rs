@@ -7,6 +7,9 @@ use crate::ui::types::{PlotMetric, ResultsPanelParams};
 use eframe::egui;
 use egui_phosphor::regular::*;
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 pub fn render_results_panel(
     ui: &mut egui::Ui,
     params: &mut ResultsPanelParams<'_>,
@@ -20,8 +23,21 @@ pub fn render_results_panel(
         ui.add_space(10.0);
     });
 
+    let fill_color = {
+        #[cfg(feature = "branding")]
+        {
+            let (r, g, b) = branding::BACKGROUND_COLOR;
+            let alpha = (branding::UI_PANEL_OPACITY * 255.0) as u8;
+            egui::Color32::from_rgba_unmultiplied(r, g, b, alpha)
+        }
+        #[cfg(not(feature = "branding"))]
+        {
+            ui.visuals().extreme_bg_color
+        }
+    };
+
     egui::Frame::new()
-        .fill(ui.visuals().extreme_bg_color)
+        .fill(fill_color)
         .corner_radius(6.0)
         .inner_margin(10.0)
         .show(ui, |ui| {

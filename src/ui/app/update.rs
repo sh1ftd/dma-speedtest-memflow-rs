@@ -9,29 +9,49 @@ use crate::ui::types::{
     ConfigParams, PlotControls, ResultsPanelParams, StatsUpdateParams, TestState,
 };
 
+#[cfg(feature = "branding")]
+use crate::branding;
+
 use super::state::SpeedTestApp;
 
 impl SpeedTestApp {
     pub fn run(self) -> Result<()> {
+        let min_size = egui::vec2(
+            super::super::constants::CONFIG_WINDOW_MIN_WIDTH,
+            super::super::constants::CONFIG_WINDOW_MIN_HEIGHT,
+        );
+        let max_size = egui::vec2(
+            super::super::constants::CONFIG_WINDOW_MAX_WIDTH,
+            super::super::constants::CONFIG_WINDOW_MAX_HEIGHT,
+        );
+
+        #[cfg(feature = "branding")]
+        let icon_data = branding::get_window_icon();
+
+        #[cfg(not(feature = "branding"))]
+        let icon_data: Option<egui::IconData> = None;
+
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_inner_size(min_size)
+            .with_min_inner_size(min_size)
+            .with_max_inner_size(max_size)
+            .with_resizable(true)
+            .with_decorations(true)
+            .with_icon(icon_data.map(std::sync::Arc::new).unwrap_or_default())
+            .with_title("DMA Speed Test");
+
+        // Center the window on the screen
+        if let Some(monitor_size) = get_primary_monitor_size() {
+            let x = (monitor_size.x - min_size.x) / 2.0;
+            let y = (monitor_size.y - min_size.y) / 2.0;
+            viewport = viewport.with_position(egui::pos2(x, y));
+        }
+
+        #[cfg(feature = "branding")]
+        let viewport = viewport.with_title(branding::get_branded_title("DMA Speed Test", "2.0.0"));
+
         let options = eframe::NativeOptions {
-            window_builder: Some(Box::new(|builder| {
-                builder
-                    .with_inner_size(egui::vec2(
-                        super::super::constants::CONFIG_WINDOW_MIN_WIDTH,
-                        super::super::constants::CONFIG_WINDOW_MIN_HEIGHT,
-                    ))
-                    .with_min_inner_size(egui::vec2(
-                        super::super::constants::CONFIG_WINDOW_MIN_WIDTH,
-                        super::super::constants::CONFIG_WINDOW_MIN_HEIGHT,
-                    ))
-                    .with_max_inner_size(egui::vec2(
-                        super::super::constants::CONFIG_WINDOW_MAX_WIDTH,
-                        super::super::constants::CONFIG_WINDOW_MAX_HEIGHT,
-                    ))
-                    .with_resizable(true)
-                    .with_decorations(true)
-                    .with_title("DMA Speed Test")
-            })),
+            viewport,
             ..Default::default()
         };
 
@@ -42,6 +62,16 @@ impl SpeedTestApp {
                 let mut fonts = egui::FontDefinitions::default();
                 egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
                 cc.egui_ctx.set_fonts(fonts);
+
+                #[cfg(feature = "branding")]
+                {
+                    let mut visuals = egui::Visuals::dark();
+                    let (r, g, b) = branding::BACKGROUND_COLOR;
+                    let bg_color = egui::Color32::from_rgb(r, g, b);
+                    visuals.panel_fill = bg_color;
+                    visuals.window_fill = bg_color;
+                    cc.egui_ctx.set_visuals(visuals);
+                }
 
                 Ok::<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(self))
             }),
@@ -54,9 +84,13 @@ impl SpeedTestApp {
 
 impl eframe::App for SpeedTestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(feature = "branding")]
+        self.branding_manager.ensure_loaded(ctx);
+
         ctx.set_pixels_per_point(self.ui_scale * 1.3);
 
         if self.is_running && !self.was_running {
+            // STARTING TEST: Maximize
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
                 super::super::constants::TEST_WINDOW_MIN_WIDTH,
                 super::super::constants::TEST_WINDOW_MIN_HEIGHT,
@@ -65,16 +99,42 @@ impl eframe::App for SpeedTestApp {
                 super::super::constants::TEST_WINDOW_MAX_WIDTH,
                 super::super::constants::TEST_WINDOW_MAX_HEIGHT,
             )));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
-                super::super::constants::TEST_WINDOW_MIN_WIDTH,
-                super::super::constants::TEST_WINDOW_MIN_HEIGHT,
-            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
         }
         self.was_running = self.is_running;
+
+        if self.show_config && !self.was_show_config {
+            // RETURNING TO CONFIG: Restore
+            let width = super::super::constants::CONFIG_WINDOW_MIN_WIDTH;
+            let height = super::super::constants::CONFIG_WINDOW_MIN_HEIGHT;
+
+            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
+                width, height,
+            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(egui::vec2(
+                super::super::constants::CONFIG_WINDOW_MAX_WIDTH,
+                super::super::constants::CONFIG_WINDOW_MAX_HEIGHT,
+            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+
+            if let Some(monitor_size) = get_primary_monitor_size() {
+                let x = (monitor_size.x - width) / 2.0;
+                let y = (monitor_size.y - height) / 2.0;
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
+            }
+        }
+        self.was_show_config = self.show_config;
 
         self.console.show(ctx);
 
         if self.show_error_modal {
+            egui::CentralPanel::default().show(ctx, |_ui| {
+                #[cfg(feature = "branding")]
+                branding::render_background(_ui, &self.branding_manager);
+            });
+
             let message = self.error_modal_message.clone();
             let mut on_close = || {
                 self.show_error_modal = false;
@@ -118,6 +178,9 @@ impl eframe::App for SpeedTestApp {
 
         if self.show_config {
             egui::CentralPanel::default().show(ctx, |ui| {
+                #[cfg(feature = "branding")]
+                branding::render_background(ui, &self.branding_manager);
+
                 let mut should_start_test = false;
                 let mut config_params = ConfigParams {
                     connector: &mut self.connector,
@@ -137,6 +200,9 @@ impl eframe::App for SpeedTestApp {
             });
         } else {
             egui::CentralPanel::default().show(ctx, |ui| {
+                #[cfg(feature = "branding")]
+                branding::render_background(ui, &self.branding_manager);
+
                 let mut should_stop_test = false;
                 let mut should_start_test = false;
                 let mut should_toggle_console = false;
@@ -194,6 +260,22 @@ impl eframe::App for SpeedTestApp {
 
         if self.is_running {
             ctx.request_repaint();
+        }
+    }
+}
+
+fn get_primary_monitor_size() -> Option<egui::Vec2> {
+    use winapi::um::winuser::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
+    // SAFETY: GetSystemMetrics is a read-only Windows API call that returns screen dimensions
+    unsafe {
+        let width = GetSystemMetrics(SM_CXSCREEN) as f32;
+        let height = GetSystemMetrics(SM_CYSCREEN) as f32;
+
+        if width > 0.0 && height > 0.0 {
+            Some(egui::Vec2::new(width, height))
+        } else {
+            None
         }
     }
 }
