@@ -11,7 +11,6 @@ use ui::app::SpeedTestApp;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let app = SpeedTestApp::new();
-    app.run()?;
+    SpeedTestApp::run()?;
     Ok(())
 }

@@ -8,3 +8,4 @@ pub mod plot_controls;
 pub mod results_panel;
 pub mod test_management;
 pub mod types;
+pub mod win_utils;

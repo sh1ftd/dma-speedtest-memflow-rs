@@ -15,7 +15,20 @@ use crate::branding;
 use super::state::SpeedTestApp;
 
 impl SpeedTestApp {
-    pub fn run(self) -> Result<()> {
+    pub fn run() -> Result<()> {
+        // Try with WGPU first (better for AMD on Windows usually)
+        let result = Self::run_with_renderer(eframe::Renderer::Wgpu);
+
+        // If WGPU failed, fallback to Glow
+        if let Err(err) = result {
+            eprintln!("WGPU renderer failed: {err}. Falling back to Glow renderer...");
+            return Self::run_with_renderer(eframe::Renderer::Glow);
+        }
+
+        result
+    }
+
+    fn run_with_renderer(renderer: eframe::Renderer) -> Result<()> {
         let min_size = egui::vec2(
             super::super::constants::CONFIG_WINDOW_MIN_WIDTH,
             super::super::constants::CONFIG_WINDOW_MIN_HEIGHT,
@@ -50,10 +63,33 @@ impl SpeedTestApp {
         #[cfg(feature = "branding")]
         let viewport = viewport.with_title(branding::get_branded_title("DMA Speed Test", "2.0.0"));
 
+        let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
+
+        // Force DX12 on Windows to avoid OpenGL/Vulkan issues on some AMD drivers
+        #[cfg(target_os = "windows")]
+        {
+            wgpu_options.wgpu_setup =
+                eframe::egui_wgpu::WgpuSetup::CreateNew(eframe::egui_wgpu::WgpuSetupCreateNew {
+                    instance_descriptor: eframe::wgpu::InstanceDescriptor {
+                        backends: eframe::wgpu::Backends::DX12,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                });
+        }
+
         let options = eframe::NativeOptions {
             viewport,
+            renderer,
+            wgpu_options,
             ..Default::default()
         };
+
+        // Print which renderer we're using
+        match renderer {
+            eframe::Renderer::Glow => println!("Using Glow renderer"),
+            eframe::Renderer::Wgpu => println!("Using WGPU renderer"),
+        }
 
         eframe::run_native(
             "DMA Speed Test",
@@ -63,17 +99,24 @@ impl SpeedTestApp {
                 egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
                 cc.egui_ctx.set_fonts(fonts);
 
+                #[allow(unused_mut)]
+                let mut visuals = egui::Visuals::dark();
+
                 #[cfg(feature = "branding")]
                 {
-                    let mut visuals = egui::Visuals::dark();
                     let (r, g, b) = branding::BACKGROUND_COLOR;
                     let bg_color = egui::Color32::from_rgb(r, g, b);
                     visuals.panel_fill = bg_color;
                     visuals.window_fill = bg_color;
-                    cc.egui_ctx.set_visuals(visuals);
                 }
 
-                Ok::<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(self))
+                cc.egui_ctx.set_visuals(visuals);
+
+                crate::ui::win_utils::setup_window_controls();
+
+                Ok::<Box<dyn eframe::App>, Box<dyn std::error::Error + Send + Sync>>(Box::new(
+                    SpeedTestApp::new(),
+                ))
             }),
         )
         .map_err(|e| anyhow::anyhow!("Failed to run GUI: {e}"))?;
@@ -84,6 +127,22 @@ impl SpeedTestApp {
 
 impl eframe::App for SpeedTestApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Force dark mode if system is overriding it
+        if !ctx.style().visuals.dark_mode {
+            #[allow(unused_mut)]
+            let mut visuals = egui::Visuals::dark();
+
+            #[cfg(feature = "branding")]
+            {
+                let (r, g, b) = branding::BACKGROUND_COLOR;
+                let bg_color = egui::Color32::from_rgb(r, g, b);
+                visuals.panel_fill = bg_color;
+                visuals.window_fill = bg_color;
+            }
+
+            ctx.set_visuals(visuals);
+        }
+
         #[cfg(feature = "branding")]
         self.branding_manager.ensure_loaded(ctx);
 
