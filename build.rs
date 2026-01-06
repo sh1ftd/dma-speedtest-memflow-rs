@@ -3,7 +3,7 @@ const BRANDING_REQUIRED_FILES: &[&str] = &["src/branding/brand.webp"];
 fn main() {
     // Check for branding files to trigger rebuilds
     for file in BRANDING_REQUIRED_FILES {
-        println!("cargo:rerun-if-changed={}", file);
+        println!("cargo:rerun-if-changed={file}");
     }
 
     // Basic Configuration
