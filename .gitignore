@@ -1,3 +1,3 @@
 /target
-src/branding/brand.webp
+src/branding/*.webp
 src/branding/mod.rs
