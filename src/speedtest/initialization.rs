@@ -45,7 +45,7 @@ fn initialize_pcileech(
         .os("win32")
         .build()
         .map_err(|e| anyhow::anyhow!(
-            "PCILeech connector error: {e}\n\nCommon fixes:\n  1. Ensure FPGA device is properly connected\n  2. Check if PCILeech driver is installed\n  3. Run as Administrator"
+            "PCILeech connector error: {e}\n\nCommon fixes:\n  1. Ensure FPGA device is properly connected\n  2. Check if PCILeech driver is installed (FTDI)\n  3. Run as Administrator"
         ))
 }
 
