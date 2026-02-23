@@ -22,7 +22,7 @@ pub fn render_results_table(
                 ui.end_row();
 
                 let mut sorted_results: Vec<_> = results.iter().collect();
-                sorted_results.sort_by(|a, b| b.0.cmp(&a.0));
+                sorted_results.sort_by_key(|k| std::cmp::Reverse(k.0));
                 for (read_size, (throughput_points, reads_points, latency_points)) in sorted_results
                 {
                     let points = match metric {
