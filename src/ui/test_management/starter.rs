@@ -7,35 +7,45 @@ use crate::{
 use std::{sync::mpsc::Sender, time::Duration};
 use tokio::sync::mpsc;
 
-pub fn start_test(
+pub fn start_connect(
     connector: Connector,
     pcileech_device: String,
+    console: &ConsoleWindow,
+) -> std::sync::mpsc::Receiver<Result<SpeedTest, String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+
+    log_to_console(console, "Connecting to device...");
+
+    std::thread::spawn(move || {
+        let result = SpeedTest::new(connector, pcileech_device)
+            .map_err(|e| format!("Failed to initialize test: {e}"));
+        let _ = tx.send(result);
+    });
+
+    rx
+}
+
+/// Start the test runner with an already-connected `SpeedTest`.
+pub fn start_test_from_connected(
+    test: SpeedTest,
     duration: u64,
     test_sizes: &[(usize, bool)],
     console: &ConsoleWindow,
     modal_tx: Sender<String>,
     stats_tx: mpsc::Sender<(f64, u64, f64, usize, f64)>,
-) -> Result<SpeedTest, String> {
+) {
     let selected_sizes = collect_enabled_sizes(test_sizes);
 
     log_to_console(console, "Starting speed test...");
 
-    let test = SpeedTest::new(connector, pcileech_device)
-        .map_err(|e| format!("Failed to initialize test: {e}"))?;
-
-    let test_clone = test.clone();
-    let console_clone = console.clone();
-
     spawn_test_runner(
         selected_sizes,
         duration,
-        console_clone,
-        test_clone,
+        console.clone(),
+        test,
         modal_tx,
         stats_tx,
     );
-
-    Ok(test)
 }
 
 fn collect_enabled_sizes(test_sizes: &[(usize, bool)]) -> Vec<usize> {

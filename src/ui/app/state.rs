@@ -21,6 +21,8 @@ pub struct SpeedTestApp {
     pub test: Option<SpeedTest>,
     pub results: TestResults,
     pub is_running: bool,
+    pub is_connecting: bool,
+    pub connect_rx: Option<std::sync::mpsc::Receiver<Result<SpeedTest, String>>>,
     pub was_running: bool,
     pub error_message: Option<String>,
     pub current_throughput: f64,
@@ -41,6 +43,7 @@ pub struct SpeedTestApp {
     pub ui_scale_text: String,
     pub test_sizes: Vec<(usize, bool)>,
     pub show_error_modal: bool,
+    pub was_error_modal: bool,
     pub error_modal_message: String,
     pub modal_rx: Option<std::sync::mpsc::Receiver<String>>,
     pub custom_plot_width: f32,
@@ -48,6 +51,7 @@ pub struct SpeedTestApp {
     pub plot_resize_start_time: Option<std::time::Instant>,
     pub plot_resize_direction: PlotResizeDirection,
     pub plot_resize_last_repeat: Option<std::time::Instant>,
+    pub center_window_frames: u8,
     #[cfg(feature = "branding")]
     pub branding_manager: BrandingManager,
 }
@@ -67,6 +71,8 @@ impl SpeedTestApp {
             test: None,
             results: Arc::new(Mutex::new(Vec::new())), // (read_size, (throughput_points, reads_points, latency_points))
             is_running: false,
+            is_connecting: false,
+            connect_rx: None,
             was_running: false,
             error_message: None,
             current_throughput: 0.0,
@@ -85,6 +91,7 @@ impl SpeedTestApp {
             ui_scale: 1.0,
             ui_scale_text: "1.0".to_string(),
             show_error_modal: false,
+            was_error_modal: false,
             error_modal_message: String::new(),
             modal_rx: None,
             custom_plot_width: DEFAULT_PLOT_WIDTH,
@@ -92,6 +99,7 @@ impl SpeedTestApp {
             plot_resize_start_time: None,
             plot_resize_direction: PlotResizeDirection::None,
             plot_resize_last_repeat: None,
+            center_window_frames: 0,
             test_sizes: vec![
                 (512, false),    // 512 bytes
                 (1024, false),   // 1KB

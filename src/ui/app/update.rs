@@ -148,8 +148,9 @@ impl eframe::App for SpeedTestApp {
 
         ctx.set_pixels_per_point(self.ui_scale * 1.3);
 
+        self.poll_connection();
+
         if self.is_running && !self.was_running {
-            // STARTING TEST: Maximize
             ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
                 super::super::constants::TEST_WINDOW_MIN_WIDTH,
                 super::super::constants::TEST_WINDOW_MIN_HEIGHT,
@@ -163,30 +164,47 @@ impl eframe::App for SpeedTestApp {
         self.was_running = self.is_running;
 
         if self.show_config && !self.was_show_config {
-            // RETURNING TO CONFIG: Restore
-            let width = super::super::constants::CONFIG_WINDOW_MIN_WIDTH;
-            let height = super::super::constants::CONFIG_WINDOW_MIN_HEIGHT;
-
-            ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
-
-            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
-                width, height,
-            )));
-            ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(egui::vec2(
-                super::super::constants::CONFIG_WINDOW_MAX_WIDTH,
-                super::super::constants::CONFIG_WINDOW_MAX_HEIGHT,
-            )));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
-
-            if let Some(monitor_size) = get_primary_monitor_size() {
-                let x = (monitor_size.x - width) / 2.0;
-                let y = (monitor_size.y - height) / 2.0;
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
-            }
+            self.center_window_frames = 2;
         }
         self.was_show_config = self.show_config;
 
+        if self.center_window_frames > 0 {
+            self.center_window_frames -= 1;
+
+            let scale = ctx.pixels_per_point();
+            let width = super::super::constants::CONFIG_WINDOW_MIN_WIDTH / scale;
+            let height = super::super::constants::CONFIG_WINDOW_MIN_HEIGHT / scale;
+
+            if self.center_window_frames == 1 {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(false));
+                ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
+                    width, height,
+                )));
+                ctx.send_viewport_cmd(egui::ViewportCommand::MaxInnerSize(egui::vec2(
+                    super::super::constants::CONFIG_WINDOW_MAX_WIDTH,
+                    super::super::constants::CONFIG_WINDOW_MAX_HEIGHT,
+                )));
+                ctx.request_repaint();
+            } else {
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(width, height)));
+                center_window_on_screen(ctx, width, height);
+            }
+        }
+
         self.console.show(ctx);
+
+        if self.show_error_modal && !self.was_error_modal {
+            self.center_window_frames = 0;
+            let scale = ctx.pixels_per_point();
+            let err_w = super::super::constants::ERROR_WINDOW_WIDTH / scale;
+            let err_h = super::super::constants::ERROR_WINDOW_HEIGHT / scale;
+            ctx.send_viewport_cmd(egui::ViewportCommand::MinInnerSize(egui::vec2(
+                err_w, err_h,
+            )));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(err_w, err_h)));
+            center_window_on_screen(ctx, err_w, err_h);
+        }
+        self.was_error_modal = self.show_error_modal;
 
         if self.show_error_modal {
             egui::CentralPanel::default().show(ctx, |_ui| {
@@ -201,6 +219,7 @@ impl eframe::App for SpeedTestApp {
             show_modal(ctx, &message, &mut on_close);
             if !self.show_error_modal {
                 self.error_modal_message.clear();
+                self.center_window_frames = 2;
             }
             return;
         }
@@ -317,16 +336,27 @@ impl eframe::App for SpeedTestApp {
             });
         }
 
-        if self.is_running {
+        if self.is_running || self.is_connecting {
             ctx.request_repaint();
         }
+    }
+}
+
+fn center_window_on_screen(ctx: &egui::Context, win_w: f32, win_h: f32) {
+    if let Some(monitor_size) = get_primary_monitor_size() {
+        let scale = ctx.pixels_per_point();
+        let monitor_w = monitor_size.x / scale;
+        let monitor_h = monitor_size.y / scale;
+        let x = (monitor_w - win_w) / 2.0;
+        let y = (monitor_h - win_h) / 2.0;
+        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::pos2(x, y)));
     }
 }
 
 fn get_primary_monitor_size() -> Option<egui::Vec2> {
     use winapi::um::winuser::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
-    // SAFETY: GetSystemMetrics is a read-only Windows API call that returns screen dimensions
+    // SAFETY: read-only Windows API call
     unsafe {
         let width = GetSystemMetrics(SM_CXSCREEN) as f32;
         let height = GetSystemMetrics(SM_CYSCREEN) as f32;
