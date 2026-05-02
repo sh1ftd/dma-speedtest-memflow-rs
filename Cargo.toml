@@ -6,7 +6,7 @@ cargo-features = ["profile-rustflags"]
     authors = ["Shifty <contact@shifty.cloud>"]
     repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
     license = "AGPL-3.0"
-    version = "2.2.3"
+    version = "2.2.4"
     edition = "2024"
 
 [lints.rust]
@@ -37,14 +37,18 @@ cargo-features = ["profile-rustflags"]
     clap = { version = "4.5.58", features = ["derive"] }
     tokio = { version = "1.48", features = ["full"] }
     parking_lot = "0.12"
-    eframe = { version = "0.33.3", features = ["wgpu"] }
-    egui_plot = "0.34.0"
-    egui-phosphor = "0.11"
+    eframe = { version = "0.34", features = ["wgpu", "glow"] }
+    egui_plot = "0.35"
+    egui-phosphor = "0.12"
     image = "0.25"
 
 [features]
     # cargo build --release --features branding
     branding = []
+
+[patch.crates-io]
+    # Transitive `env_logger` 0.8 → `atty` (unmaintained / unsound on Windows). Same API via `IsTerminal`.
+    atty = { path = "patches/atty" }
 
 [target.'cfg(windows)'.dependencies]
     winapi = { version = "0.3", features = [

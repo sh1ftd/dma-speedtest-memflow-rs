@@ -68,14 +68,9 @@ impl SpeedTestApp {
         // Force DX12 on Windows to avoid OpenGL/Vulkan issues on some AMD drivers
         #[cfg(target_os = "windows")]
         {
-            wgpu_options.wgpu_setup =
-                eframe::egui_wgpu::WgpuSetup::CreateNew(eframe::egui_wgpu::WgpuSetupCreateNew {
-                    instance_descriptor: eframe::wgpu::InstanceDescriptor {
-                        backends: eframe::wgpu::Backends::DX12,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                });
+            let mut setup = eframe::egui_wgpu::WgpuSetupCreateNew::without_display_handle();
+            setup.instance_descriptor.backends = eframe::wgpu::Backends::DX12;
+            wgpu_options.wgpu_setup = eframe::egui_wgpu::WgpuSetup::CreateNew(setup);
         }
 
         let options = eframe::NativeOptions {
@@ -126,9 +121,9 @@ impl SpeedTestApp {
 }
 
 impl eframe::App for SpeedTestApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Force dark mode if system is overriding it
-        if !ctx.style().visuals.dark_mode {
+        if !ctx.global_style().visuals.dark_mode {
             #[allow(unused_mut)]
             let mut visuals = egui::Visuals::dark();
 
@@ -191,8 +186,6 @@ impl eframe::App for SpeedTestApp {
             }
         }
 
-        self.console.show(ctx);
-
         if self.show_error_modal && !self.was_error_modal {
             self.center_window_frames = 0;
             let scale = ctx.pixels_per_point();
@@ -206,8 +199,50 @@ impl eframe::App for SpeedTestApp {
         }
         self.was_error_modal = self.show_error_modal;
 
+        if !self.show_error_modal {
+            if self.is_running
+                && let Some(rx) = &mut self.stats_rx
+            {
+                let mut stats_params = StatsUpdateParams {
+                    current_throughput: &mut self.current_throughput,
+                    current_reads: &mut self.current_reads,
+                    current_latency: &mut self.current_latency,
+                    current_test_size: &mut self.current_test_size,
+                    test_start_time: &mut self.test_start_time,
+                    max_throughput: &mut self.max_throughput,
+                    completed_chunks: &mut self.completed_chunks,
+                };
+
+                let stats_closed =
+                    handle_stats_update(rx, &mut stats_params, &self.results, &self.console);
+
+                if stats_closed {
+                    self.stop_test_impl();
+                }
+            }
+
+            if let Some(rx) = &self.modal_rx
+                && let Ok(error_msg) = rx.try_recv()
+            {
+                self.show_error_modal = true;
+                self.error_modal_message = error_msg;
+                self.stop_test_impl();
+                self.show_config = true;
+            }
+        }
+
+        if self.is_running || self.is_connecting {
+            ctx.request_repaint();
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+
+        self.console.show(&ctx);
+
         if self.show_error_modal {
-            egui::CentralPanel::default().show(ctx, |_ui| {
+            egui::CentralPanel::default().show_inside(ui, |_ui| {
                 #[cfg(feature = "branding")]
                 branding::render_background(_ui, &self.branding_manager);
             });
@@ -216,7 +251,7 @@ impl eframe::App for SpeedTestApp {
             let mut on_close = || {
                 self.show_error_modal = false;
             };
-            show_modal(ctx, &message, &mut on_close);
+            show_modal(&ctx, &message, &mut on_close);
             if !self.show_error_modal {
                 self.error_modal_message.clear();
                 self.center_window_frames = 2;
@@ -224,38 +259,8 @@ impl eframe::App for SpeedTestApp {
             return;
         }
 
-        if self.is_running
-            && let Some(rx) = &mut self.stats_rx
-        {
-            let mut stats_params = StatsUpdateParams {
-                current_throughput: &mut self.current_throughput,
-                current_reads: &mut self.current_reads,
-                current_latency: &mut self.current_latency,
-                current_test_size: &mut self.current_test_size,
-                test_start_time: &mut self.test_start_time,
-                max_throughput: &mut self.max_throughput,
-                completed_chunks: &mut self.completed_chunks,
-            };
-
-            let stats_closed =
-                handle_stats_update(rx, &mut stats_params, &self.results, &self.console);
-
-            if stats_closed {
-                self.stop_test_impl();
-            }
-        }
-
-        if let Some(rx) = &self.modal_rx
-            && let Ok(error_msg) = rx.try_recv()
-        {
-            self.show_error_modal = true;
-            self.error_modal_message = error_msg;
-            self.stop_test_impl();
-            self.show_config = true;
-        }
-
         if self.show_config {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
                 #[cfg(feature = "branding")]
                 branding::render_background(ui, &self.branding_manager);
 
@@ -277,7 +282,7 @@ impl eframe::App for SpeedTestApp {
                 }
             });
         } else {
-            egui::CentralPanel::default().show(ctx, |ui| {
+            egui::CentralPanel::default().show_inside(ui, |ui| {
                 #[cfg(feature = "branding")]
                 branding::render_background(ui, &self.branding_manager);
 
@@ -334,10 +339,6 @@ impl eframe::App for SpeedTestApp {
                     self.console.toggle();
                 }
             });
-        }
-
-        if self.is_running || self.is_connecting {
-            ctx.request_repaint();
         }
     }
 }
