@@ -200,6 +200,32 @@ fn size_label(size: usize) -> String {
     }
 }
 
+pub fn prompt_exit() -> Result<()> {
+    io::stdout().write_all(b"\nBenchmark finished. Press Enter to exit.\n")?;
+    io::stdout().flush()?;
+    let mut line = String::new();
+    io::stdin().read_line(&mut line)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub fn ensure_stdio_for_headless() {
+    use winapi::um::consoleapi::AllocConsole;
+    use winapi::um::wincon::{ATTACH_PARENT_PROCESS, AttachConsole, GetConsoleWindow};
+    // SAFETY: standard Win32 console attach/alloc; null check avoids calling on an existing console.
+    unsafe {
+        if GetConsoleWindow().is_null() {
+            let attached = AttachConsole(ATTACH_PARENT_PROCESS) != 0;
+            if !attached {
+                let _ = AllocConsole();
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn ensure_stdio_for_headless() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -238,29 +264,3 @@ mod tests {
         assert_eq!(avg(10.0, 2), 5.0);
     }
 }
-
-pub fn prompt_exit() -> Result<()> {
-    io::stdout().write_all(b"\nBenchmark finished. Press Enter to exit.\n")?;
-    io::stdout().flush()?;
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    Ok(())
-}
-
-#[cfg(windows)]
-pub fn ensure_stdio_for_headless() {
-    use winapi::um::consoleapi::AllocConsole;
-    use winapi::um::wincon::{ATTACH_PARENT_PROCESS, AttachConsole, GetConsoleWindow};
-    // SAFETY: standard Win32 console attach/alloc; null check avoids calling on an existing console.
-    unsafe {
-        if GetConsoleWindow().is_null() {
-            let attached = AttachConsole(ATTACH_PARENT_PROCESS) != 0;
-            if !attached {
-                let _ = AllocConsole();
-            }
-        }
-    }
-}
-
-#[cfg(not(windows))]
-pub fn ensure_stdio_for_headless() {}
