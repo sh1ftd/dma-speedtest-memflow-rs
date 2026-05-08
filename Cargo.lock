@@ -1291,7 +1291,7 @@ dependencies = [
 
 [[package]]
 name = "dma-speedtest-memflow-rs"
-version = "2.3.0"
+version = "2.3.1"
 dependencies = [
  "anyhow",
  "clap",
