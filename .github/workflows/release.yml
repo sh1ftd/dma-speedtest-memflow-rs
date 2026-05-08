@@ -49,6 +49,8 @@ jobs:
       - name: Build Release
         run: cargo build --release
 
+      # Local zip names must be glob-safe: `gh release upload` treats paths as globs and
+      # `[ GUI ]` is parsed as a character class. Publish names use `?name=` on upload API.
 
       - name: Zip GUI and CLI
         run: |
@@ -69,15 +71,15 @@ jobs:
             Compress-Archive -Path "$pkgDir/*" -DestinationPath $zipPath
           }
 
-          New-BinZip "target/release/dma-speedtest-memflow-rs.exe" "[ GUI ] dma-speedtest-memflow-rs-v$version.zip"
-          New-BinZip "target/release/cli-dma-speedtest-memflow-rs.exe" "[ CLI ] dma-speedtest-memflow-rs-v$version.zip"
+          New-BinZip "target/release/dma-speedtest-memflow-rs.exe" "staging-gui-v$version.zip"
+          New-BinZip "target/release/cli-dma-speedtest-memflow-rs.exe" "staging-cli-v$version.zip"
 
       - name: Verify zips
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.get_version.outputs.version }}"
-          $guiZip = "[ GUI ] dma-speedtest-memflow-rs-v$version.zip"
-          $cliZip = "[ CLI ] dma-speedtest-memflow-rs-v$version.zip"
+          $guiZip = "staging-gui-v$version.zip"
+          $cliZip = "staging-cli-v$version.zip"
 
           function Assert-Zip([string]$zip, [string]$expectedExe) {
             $dest = "zip-check"
@@ -98,7 +100,7 @@ jobs:
           Assert-Zip $guiZip "dma-speedtest-memflow-rs.exe"
           Assert-Zip $cliZip "cli-dma-speedtest-memflow-rs.exe"
 
-      - name: Create release tag and notes
+      - name: Create release
         uses: softprops/action-gh-release@v1
         with:
           generate_release_notes: true
@@ -106,13 +108,37 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Upload prefixed zip assets
+      - name: Upload release zips (bracketed filenames)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           $version = "${{ steps.get_version.outputs.version }}"
-          $gui = "[ GUI ] dma-speedtest-memflow-rs-v$version.zip"
-          $cli = "[ CLI ] dma-speedtest-memflow-rs-v$version.zip"
-          gh release upload ("v{0}" -f $version) "$gui" "$cli" --repo ${{ github.repository }} --clobber
+          $repo = "${{ github.repository }}"
+          $tag = "v$version"
+          $release = gh api "repos/$repo/releases/tags/$tag" | ConvertFrom-Json
 
+          $guiPublished = "[ GUI ] dma-speedtest-memflow-rs-v$version.zip"
+          $cliPublished = "[ CLI ] dma-speedtest-memflow-rs-v$version.zip"
+
+          foreach ($asset in $release.assets) {
+            if ($asset.name -eq $guiPublished -or $asset.name -eq $cliPublished) {
+              gh api --method DELETE "repos/$repo/releases/assets/$($asset.id)" -H "Accept: application/vnd.github+json"
+            }
+          }
+
+          $uploadBase = $release.upload_url -replace '\{\?name,label\}$', ''
+          function Upload-PublishedZip([string]$localPath, [string]$publishedName) {
+            $enc = [Uri]::EscapeDataString($publishedName)
+            $uri = "$uploadBase?name=$enc"
+            $headers = @{
+              Accept = "application/vnd.github+json"
+              Authorization = "Bearer $env:GH_TOKEN"
+              "X-GitHub-Api-Version" = "2022-11-28"
+            }
+            Invoke-WebRequest -Uri $uri -Method Post -Headers $headers -InFile $localPath -ContentType "application/octet-stream"
+          }
+
+          Upload-PublishedZip "staging-gui-v$version.zip" $guiPublished
+          Upload-PublishedZip "staging-cli-v$version.zip" $cliPublished
