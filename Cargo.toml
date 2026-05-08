@@ -2,12 +2,25 @@ cargo-features = ["profile-rustflags"]
 
 [package]
     name = "dma-speedtest-memflow-rs"
+    default-run = "dma-speedtest-memflow-rs"
 
     authors = ["Shifty <contact@shifty.cloud>"]
     repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
     license = "AGPL-3.0"
-    version = "2.2.4"
+    version = "2.3.0"
     edition = "2024"
+
+[lib]
+    name = "dma_speedtest_memflow_rs"
+    path = "src/lib.rs"
+
+[[bin]]
+    name = "dma-speedtest-memflow-rs"
+    path = "src/gui_dma_speedtest.rs"
+
+[[bin]]
+    name = "cli-dma-speedtest-memflow-rs"
+    path = "src/cli_dma_speedtest.rs"
 
 [lints.rust]
     # Security
@@ -59,6 +72,8 @@ cargo-features = ["profile-rustflags"]
         "handleapi",
         "winnt",
         "dwmapi",
+        "consoleapi",
+        "wincon",
     ] }
 
 [profile.dev]

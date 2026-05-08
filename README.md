@@ -7,7 +7,6 @@ Windows GUI for benchmarking DMA read performance through the [memflow](https://
 - PCILeech and memflow-native connectors
 - Batch testing across configurable read sizes
 - Live plots for throughput, reads/s, and latency with per-size summaries
-- Embedded console, adjustable UI scale, and resizable plots
 
 ## Build from source
 
@@ -15,7 +14,6 @@ Windows GUI for benchmarking DMA read performance through the [memflow](https://
 git clone https://github.com/sh1ftd/dma-speedtest-memflow-rs.git
 cd dma-speedtest-memflow-rs
 cargo build --release
-./target/release/dma-speedtest-memflow-rs
 ```
 
 ## Usage
@@ -31,7 +29,23 @@ cargo build --release
 
 - **Configuration:** connector selection, duration slider, read-size grid with bulk actions, UI scale input.
 - **Results:** throughput/reads/latency plots, min/avg/max tables, live metrics banner, chunk progress, console toggle.
-- **Console:** optional overlay listing size transitions, stats updates, and errors.
+- **Console:** optional overlay listing size transitions, stats updates, and errors
+
+## CLI usage
+
+```text
+Usage: cli-dma-speedtest-memflow-rs.exe [OPTIONS]
+
+Options:
+      --connector <CONNECTOR>  [default: pcileech] [possible values: pcileech, native]
+      --device <DEVICE>        PCILeech device string (ignored for native connector). [default: FPGA]
+      --duration <DURATION>    Seconds per read size (1–60). [default: 10]
+      --sizes <SIZES>          Optional override: comma-separated read sizes in bytes. If omitted, only the default 4–32 KiB set runs.
+  -h, --help                   Print help
+  -V, --version                Print version
+```
+
+The CLI waits for Enter on completion.
 
 ## Requirements
 
@@ -42,3 +56,5 @@ cargo build --release
 ## Credits
 
 Built with [Rust](https://www.rust-lang.org/), [memflow](https://github.com/memflow/memflow), [tokio](https://github.com/tokio-rs/tokio) and [egui](https://github.com/emilk/).
+
+License: **AGPL-3.0** (see `Cargo.toml`).

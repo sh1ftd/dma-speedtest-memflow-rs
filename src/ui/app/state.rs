@@ -100,6 +100,7 @@ impl SpeedTestApp {
             plot_resize_direction: PlotResizeDirection::None,
             plot_resize_last_repeat: None,
             center_window_frames: 0,
+            // Defaults: only 4 / 8 / 16 / 32 KiB enabled (same list as `cli::DEFAULT_READ_SIZES`).
             test_sizes: vec![
                 (512, false),    // 512 bytes
                 (1024, false),   // 1KB

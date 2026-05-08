@@ -22,3 +22,21 @@ pub fn get_size_label(size: usize) -> String {
         format!("{size} B")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn get_size_label_formats_bytes_under_1k() {
+        assert_eq!(get_size_label(0), "0 B");
+        assert_eq!(get_size_label(512), "512 B");
+    }
+
+    #[test]
+    fn get_size_label_formats_kb_as_integer_division() {
+        assert_eq!(get_size_label(1024), "1 KB");
+        assert_eq!(get_size_label(1536), "1 KB");
+        assert_eq!(get_size_label(2048), "2 KB");
+    }
+}

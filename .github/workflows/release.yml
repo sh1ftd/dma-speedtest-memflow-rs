@@ -53,6 +53,7 @@ jobs:
         run: |
           mkdir release-package
           Copy-Item "target/release/dma-speedtest-memflow-rs.exe" -Destination "release-package/"
+          Copy-Item "target/release/cli-dma-speedtest-memflow-rs.exe" -Destination "release-package/"
           Copy-Item "DLL_DEP/*" -Destination "release-package/" -Recurse
           Compress-Archive -Path "release-package/*" -DestinationPath "dma-speedtest-memflow-rs.zip"
         
