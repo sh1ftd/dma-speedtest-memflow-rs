@@ -49,18 +49,79 @@ jobs:
       - name: Build Release
         run: cargo build --release
 
-      - name: Create Release Package
+      - name: Create release zips (source/gui/cli)
         run: |
-          mkdir release-package
-          Copy-Item "target/release/dma-speedtest-memflow-rs.exe" -Destination "release-package/"
-          Copy-Item "target/release/cli-dma-speedtest-memflow-rs.exe" -Destination "release-package/"
-          Copy-Item "DLL_DEP/*" -Destination "release-package/" -Recurse
-          Compress-Archive -Path "release-package/*" -DestinationPath "dma-speedtest-memflow-rs.zip"
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.get_version.outputs.version }}"
+
+          $sourceDir = "source-package"
+          Remove-Item $sourceDir -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $sourceDir | Out-Null
+
+          Copy-Item "Cargo.toml" -Destination $sourceDir
+          Copy-Item "Cargo.lock" -Destination $sourceDir
+          if (Test-Path "build.rs") { Copy-Item "build.rs" -Destination $sourceDir }
+          if (Test-Path "README.md") { Copy-Item "README.md" -Destination $sourceDir }
+          if (Test-Path "LICENSE") { Copy-Item "LICENSE" -Destination $sourceDir }
+          if (Test-Path "LICENSE.md") { Copy-Item "LICENSE.md" -Destination $sourceDir }
+          if (Test-Path "AGPL-3.0") { Copy-Item "AGPL-3.0" -Destination $sourceDir }
+
+          Copy-Item "src" -Destination "$sourceDir/src" -Recurse
+          if (Test-Path "patches") { Copy-Item "patches" -Destination "$sourceDir/patches" -Recurse }
+          if (Test-Path ".github") { Copy-Item ".github" -Destination "$sourceDir/.github" -Recurse }
+
+          $sourceZip = "dma-speedtest-memflow-rs-source-v$version.zip"
+          Remove-Item $sourceZip -Force -ErrorAction SilentlyContinue
+          Compress-Archive -Path "$sourceDir/*" -DestinationPath $sourceZip
+
+          function New-BinZip([string]$exePath, [string]$zipPath) {
+            $pkgDir = "bin-package"
+            Remove-Item $pkgDir -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $pkgDir | Out-Null
+
+            Copy-Item $exePath -Destination $pkgDir
+
+            if (Test-Path "DLL_DEP") {
+              Copy-Item "DLL_DEP/*" -Destination $pkgDir -Recurse
+            } else {
+              throw "DLL_DEP/ not found (expected dependency DLLs)"
+            }
+
+            Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
+            Compress-Archive -Path "$pkgDir/*" -DestinationPath $zipPath
+          }
+
+          $guiZip = "dma-speedtest-memflow-rs-gui-v$version.zip"
+          New-BinZip "target/release/dma-speedtest-memflow-rs.exe" $guiZip
+
+          $cliZip = "dma-speedtest-memflow-rs-cli-v$version.zip"
+          New-BinZip "target/release/cli-dma-speedtest-memflow-rs.exe" $cliZip
+
+      - name: Verify zip contents
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "${{ steps.get_version.outputs.version }}"
+
+          function Assert-Zip([string]$zip, [string]$expectedExe) {
+            $dest = "zip-check"
+            Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue
+            Expand-Archive -Path $zip -DestinationPath $dest -Force
+            if (-not (Test-Path (Join-Path $dest $expectedExe))) { throw "Missing '$expectedExe' in $zip" }
+            if (Test-Path (Join-Path $dest "DLL_DEP")) { throw "DLL_DEP directory should not exist inside $zip" }
+            $dllCount = @(Get-ChildItem -Path $dest -Filter *.dll -File -ErrorAction SilentlyContinue).Count
+            if ($dllCount -lt 1) { throw "No DLLs found at zip root in $zip" }
+          }
+
+          Assert-Zip "dma-speedtest-memflow-rs-gui-v$version.zip" "dma-speedtest-memflow-rs.exe"
+          Assert-Zip "dma-speedtest-memflow-rs-cli-v$version.zip" "cli-dma-speedtest-memflow-rs.exe"
         
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          files: dma-speedtest-memflow-rs.zip
+          files: |
+            dma-speedtest-memflow-rs-source-v${{ steps.get_version.outputs.version }}.zip
+            dma-speedtest-memflow-rs-gui-v${{ steps.get_version.outputs.version }}.zip
+            dma-speedtest-memflow-rs-cli-v${{ steps.get_version.outputs.version }}.zip
           generate_release_notes: true
           tag_name: v${{ steps.get_version.outputs.version }}
         env:
