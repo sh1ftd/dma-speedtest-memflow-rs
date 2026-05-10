@@ -7,7 +7,7 @@ cargo-features = ["profile-rustflags"]
     authors = ["Shifty <contact@shifty.cloud>"]
     repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
     license = "AGPL-3.0"
-    version = "2.3.1"
+    version = "2.3.4"
     edition = "2024"
 
 [lib]
@@ -48,7 +48,7 @@ cargo-features = ["profile-rustflags"]
     memflow-native = "0.2"
     anyhow = "1.0.101"
     clap = { version = "4.5.58", features = ["derive"] }
-    tokio = { version = "1.48", features = ["full"] }
+    tokio = { version = "1.52.3", features = ["full"] }
     parking_lot = "0.12"
     eframe = { version = "0.34", features = ["wgpu", "glow"] }
     egui_plot = "0.35"
