@@ -58,7 +58,7 @@ fn render_size_grid(test_sizes: &mut [(usize, bool)], ui: &mut egui::Ui) {
                     .strong();
 
                 let stroke = if is_selected {
-                    egui::Stroke::new(2.0, color)
+                    egui::Stroke::new(2.0_f32, color)
                 } else {
                     ui.visuals().widgets.inactive.bg_stroke
                 };

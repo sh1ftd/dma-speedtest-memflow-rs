@@ -18,7 +18,7 @@ pub fn show_modal(ctx: &egui::Context, message: &str, on_close: &mut dyn FnMut()
 
             egui::Frame::new()
                 .fill(child.visuals().extreme_bg_color)
-                .stroke(egui::Stroke::new(1.5, ACCENT_COLOR))
+                .stroke(egui::Stroke::new(1.5_f32, ACCENT_COLOR))
                 .corner_radius(10.0)
                 .inner_margin(8.0)
                 .show(&mut child, |ui| {
@@ -76,7 +76,10 @@ fn render_action_row(ui: &mut egui::Ui, on_close: &mut dyn FnMut()) {
                 .strong(),
         )
         .fill(ACCENT_COLOR)
-        .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(192, 57, 43)))
+        .stroke(egui::Stroke::new(
+            2.0_f32,
+            egui::Color32::from_rgb(192, 57, 43),
+        ))
         .corner_radius(8.0)
         .min_size(egui::vec2(96.0, 36.0));
 

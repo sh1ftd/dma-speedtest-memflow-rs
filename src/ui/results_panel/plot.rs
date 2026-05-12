@@ -108,7 +108,7 @@ fn render_plot(
                         plot_ui.line(
                             Line::new(get_size_label(*read_size), plot_points)
                                 .color(color)
-                                .width(2.0),
+                                .width(2.0_f32),
                         );
                     }
                 }

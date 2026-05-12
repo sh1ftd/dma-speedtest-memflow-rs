@@ -13,7 +13,10 @@ pub fn render_start_button(
         let start_button =
             egui::Button::new(egui::RichText::new("START TEST").color(egui::Color32::BLACK))
                 .fill(egui::Color32::from_rgb(46, 204, 113))
-                .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(39, 174, 96)));
+                .stroke(egui::Stroke::new(
+                    2.0_f32,
+                    egui::Color32::from_rgb(39, 174, 96),
+                ));
 
         if ui.add_sized([250.0, 55.0], start_button).clicked() {
             if connector_requires_device {

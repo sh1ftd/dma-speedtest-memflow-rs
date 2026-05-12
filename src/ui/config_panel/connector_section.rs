@@ -49,9 +49,9 @@ fn render_connector_button(
             egui::Color32::from_rgb(52, 152, 219)
         })
         .stroke(if is_selected {
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(39, 174, 96))
+            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(39, 174, 96))
         } else {
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(41, 128, 185))
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(41, 128, 185))
         });
 
     if ui.add_sized([120.0, 35.0], button).clicked() {

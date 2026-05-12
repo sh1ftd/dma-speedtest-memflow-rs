@@ -69,7 +69,10 @@ pub fn render_results_panel(
                                 .color(egui::Color32::BLACK),
                         )
                         .fill(egui::Color32::from_rgb(231, 76, 60))
-                        .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(192, 57, 43)));
+                        .stroke(egui::Stroke::new(
+                            2.0_f32,
+                            egui::Color32::from_rgb(192, 57, 43),
+                        ));
                         if ui.add_sized([150.0, 40.0], stop_button).clicked() {
                             on_stop_test();
                         }
@@ -79,7 +82,10 @@ pub fn render_results_panel(
                                 .color(egui::Color32::BLACK),
                         )
                         .fill(egui::Color32::from_rgb(46, 204, 113))
-                        .stroke(egui::Stroke::new(2.0, egui::Color32::from_rgb(39, 174, 96)));
+                        .stroke(egui::Stroke::new(
+                            2.0_f32,
+                            egui::Color32::from_rgb(39, 174, 96),
+                        ));
                         if ui.add_sized([170.0, 40.0], again_button).clicked() {
                             on_test_again();
                             *params.show_config = false;
@@ -92,7 +98,7 @@ pub fn render_results_panel(
                         )
                         .fill(egui::Color32::from_rgb(241, 196, 15))
                         .stroke(egui::Stroke::new(
-                            2.0,
+                            2.0_f32,
                             egui::Color32::from_rgb(243, 156, 18),
                         ));
                         if ui.add_sized([190.0, 40.0], back_button).clicked() {
