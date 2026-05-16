@@ -1,8 +1,10 @@
 //! CLI benchmarking implementation used by the prefixed CLI binary.
 use anyhow::{Result, bail};
 use clap::Parser;
+use owo_colors::OwoColorize;
+use owo_colors::{Stream, Style};
 use std::{
-    io::{self, Write},
+    io::{self, IsTerminal, Write},
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -10,6 +12,17 @@ use tokio::sync::mpsc;
 use crate::speedtest::{Connector, SpeedTest};
 
 pub const DEFAULT_READ_SIZES: [usize; 4] = [4096, 8192, 16384, 32768];
+
+/// Visual break between per-size benchmark sections in CLI output.
+const BETWEEN_READ_SIZE_SECTIONS: &str =
+    "--------------------------------------------------------------------";
+
+fn print_between_read_size_sections(so: Stream) {
+    println!(
+        "{}",
+        BETWEEN_READ_SIZE_SECTIONS.if_supports_color(so, |t| t.dimmed()),
+    );
+}
 
 #[derive(Copy, Clone, Default, Debug, clap::ValueEnum)]
 pub enum CliConnector {
@@ -55,34 +68,282 @@ pub struct CliArgs {
     pub sizes: Option<Vec<usize>>,
 }
 
+pub fn default_cli_args() -> CliArgs {
+    CliArgs {
+        connector: CliConnector::default(),
+        device: "FPGA".to_owned(),
+        duration: 10,
+        sizes: None,
+    }
+}
+
 pub fn print_startup_help() {
-    // Keep this terse and column-aligned so defaults are obvious at a glance.
+    let so = Stream::Stdout;
+
     println!(
-        "Usage: cli-dma-speedtest-memflow-rs.exe [OPTIONS]\n\n\
-Options:\n\
-  {arg:<22} {def:<16} Description\n\
-  --------------------------------------------------------------------------\n\
-  {carg:<22} {cdef:<16} pcileech | native\n\
-  {darg:<22} {ddef:<16} PCILeech device string (ignored for native)\n\
-  {targ:<22} {tdef:<16} seconds per read size (1–60)\n\
-  {sarg:<22} {sdef:<16} optional override; replaces default list when set\n\
-  {harg:<22} {hdef:<16} print clap help\n\
-  {varg:<22} {vdef:<16} print version\n",
-        arg = "Argument",
-        def = "[default]",
-        carg = "--connector <CONNECTOR>",
-        cdef = "[pcileech]",
-        darg = "--device <DEVICE>",
-        ddef = "[FPGA]",
-        targ = "--duration <SECONDS>",
-        tdef = "[10]",
-        sarg = "--sizes <CSV_BYTES>",
-        sdef = "[4096,8192,16384,32768]",
-        harg = "-h, --help",
-        hdef = "",
-        varg = "-V, --version",
-        vdef = "",
+        "{}: {} [OPTIONS]",
+        "Usage".if_supports_color(so, |t| t.style(Style::new().cyan().bold())),
+        "cli-dma-speedtest-memflow-rs.exe"
+            .if_supports_color(so, |t| { t.style(Style::new().bright_white().bold()) }),
     );
+    println!();
+    println!(
+        "{}",
+        "Options:".if_supports_color(so, |t| t.style(Style::new().magenta().bold())),
+    );
+    println!(
+        "  {} {} {}",
+        "Argument".if_supports_color(so, |t| t.style(Style::new().yellow().bold())),
+        format!("{:<16}", "[default]").if_supports_color(so, |t| t.dimmed()),
+        "Description".if_supports_color(so, |t| t.white()),
+    );
+    println!(
+        "{}",
+        "  --------------------------------------------------------------------------"
+            .if_supports_color(so, |t| t.dimmed()),
+    );
+
+    let row = |flag: &str, default: &str, desc: &str| {
+        println!(
+            "  {} {} {}",
+            flag.if_supports_color(so, |t| t.yellow()),
+            format!("{default:<16}").if_supports_color(so, |t| t.dimmed()),
+            desc,
+        );
+    };
+
+    row("--connector <CONNECTOR>", "[pcileech]", "pcileech | native");
+    row(
+        "--device <DEVICE>",
+        "[FPGA]",
+        "PCILeech device string (ignored for native)",
+    );
+    row(
+        "--duration <SECONDS>",
+        "[10]",
+        "seconds per read size (1–60)",
+    );
+    row(
+        "--sizes <CSV_BYTES>",
+        "[4096,8192,16384,32768]",
+        "optional override; replaces default list when set",
+    );
+    row("-h, --help", "", "print clap help");
+    row("-V, --version", "", "print version");
+}
+
+pub fn print_more_options_hint() {
+    let so = Stream::Stdout;
+    println!(
+        "{}",
+        "For more options, run with --help.\n\n".if_supports_color(so, |t| t.dimmed()),
+    );
+}
+
+const INTERACTIVE_DEFAULTS_PROMPT_SECS: u64 = 3;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LaunchMenuChoice {
+    RunDefaults,
+    Customize,
+}
+
+struct RawModeGuard;
+
+impl Drop for RawModeGuard {
+    fn drop(&mut self) {
+        let _ = crossterm::terminal::disable_raw_mode();
+    }
+}
+
+fn timed_defaults_yes_no_prompt(so: Stream) -> Result<LaunchMenuChoice> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
+
+    const TICK: Duration = Duration::from_millis(100);
+
+    crossterm::terminal::enable_raw_mode()
+        .map_err(|e| anyhow::anyhow!("could not enable raw terminal mode: {e}"))?;
+    let _raw_guard = RawModeGuard;
+
+    let deadline =
+        std::time::Instant::now() + Duration::from_secs(INTERACTIVE_DEFAULTS_PROMPT_SECS);
+    let mut last_shown_secs: Option<u64> = None;
+
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            print!("\r\x1b[2K");
+            io::stdout().flush()?;
+            println!();
+            return Ok(LaunchMenuChoice::RunDefaults);
+        }
+
+        let secs = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+        if last_shown_secs != Some(secs) {
+            last_shown_secs = Some(secs);
+            print!(
+                "\r\x1b[2K{} {}",
+                "Run with defaults? [Y/n]".if_supports_color(so, |t| t.style(Style::new().bold())),
+                format!("({secs}s)").if_supports_color(so, |t| t.dimmed()),
+            );
+            io::stdout().flush()?;
+        }
+
+        let poll_wait = TICK.min(left);
+        if event::poll(poll_wait)?
+            && let Event::Key(key) = event::read()?
+        {
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            match key.code {
+                KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                    print!("\r\x1b[2K");
+                    io::stdout().flush()?;
+                    println!();
+                    return Ok(LaunchMenuChoice::RunDefaults);
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') => {
+                    print!("\r\x1b[2K");
+                    io::stdout().flush()?;
+                    println!();
+                    return Ok(LaunchMenuChoice::Customize);
+                }
+                KeyCode::Esc => {
+                    print!("\r\x1b[2K");
+                    io::stdout().flush()?;
+                    println!();
+                    return Ok(LaunchMenuChoice::RunDefaults);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+fn parse_sizes_csv_trimmed(input: &str) -> Result<Vec<usize>> {
+    let mut out = Vec::new();
+    for part in input.split(',') {
+        let t = part.trim();
+        if t.is_empty() {
+            continue;
+        }
+        let n: usize = t.parse().map_err(|_| {
+            anyhow::anyhow!("invalid read size {t:?} (expected positive integers, comma-separated)")
+        })?;
+        if n == 0 {
+            bail!("read sizes must be positive; got 0");
+        }
+        out.push(n);
+    }
+    if out.is_empty() {
+        bail!("no valid sizes in {:?}", input);
+    }
+    Ok(out)
+}
+
+fn sizes_from_interactive_input(s: &str) -> Result<Option<Vec<usize>>> {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(parse_sizes_csv_trimmed(trimmed)?))
+}
+
+/// Prompt Y/n for defaults with a **10 s** idle countdown (Yes). Non-TTY stdin/stdout returns [`default_cli_args`] immediately.
+pub fn interactive_launch_cli_args() -> Result<CliArgs> {
+    use dialoguer::{Input, Select, theme::ColorfulTheme};
+
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        eprintln!(
+            "{}",
+            "stdin or stdout is not a terminal; using default benchmark settings (pass CLI flags to configure)."
+                .if_supports_color(Stream::Stderr, |t| t.dimmed()),
+        );
+        return Ok(default_cli_args());
+    }
+
+    let so = Stream::Stdout;
+    let prompt_choice = timed_defaults_yes_no_prompt(so)?;
+
+    match prompt_choice {
+        LaunchMenuChoice::RunDefaults => {
+            print_more_options_hint();
+            Ok(default_cli_args())
+        }
+        LaunchMenuChoice::Customize => {
+            let so = Stream::Stdout;
+            println!(
+                "{}",
+                "Customize — defaults if you press Enter on each prompt."
+                    .if_supports_color(so, |t| t.style(Style::new().cyan().bold())),
+            );
+            println!(
+                "{}",
+                "Defaults: PCILeech, device FPGA, 10 s per read size, sizes 4–32 KiB."
+                    .if_supports_color(so, |t| t.dimmed()),
+            );
+            println!();
+
+            let theme = ColorfulTheme::default();
+
+            let connector_idx = Select::with_theme(&theme)
+                .with_prompt("Connector")
+                .items(["pcileech", "native"])
+                .default(0)
+                .interact()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let connector = if connector_idx == 0 {
+                CliConnector::Pcileech
+            } else {
+                CliConnector::Native
+            };
+
+            let duration = loop {
+                let s: String = Input::with_theme(&theme)
+                    .with_prompt("Seconds per read size (1–60)")
+                    .default("10".to_string())
+                    .interact_text()
+                    .map_err(|e| anyhow::anyhow!("{e}"))?;
+                match s.trim().parse::<u64>() {
+                    Ok(n) if (1..=60).contains(&n) => break n,
+                    _ => eprintln!("Please enter an integer from 1 to 60."),
+                }
+            };
+
+            let device = if matches!(connector, CliConnector::Pcileech) {
+                Input::with_theme(&theme)
+                    .with_prompt("PCILeech device")
+                    .default("FPGA".to_string())
+                    .interact_text()
+                    .map_err(|e| anyhow::anyhow!("{e}"))?
+            } else {
+                default_cli_args().device
+            };
+
+            let sizes_default = DEFAULT_READ_SIZES
+                .iter()
+                .map(|n| n.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+
+            let sizes_str: String = Input::with_theme(&theme)
+                .with_prompt("Read sizes in bytes, comma-separated")
+                .default(sizes_default)
+                .interact_text()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+            let sizes = sizes_from_interactive_input(sizes_str.trim())?;
+
+            Ok(CliArgs {
+                connector,
+                device,
+                duration,
+                sizes,
+            })
+        }
+    }
 }
 
 pub async fn run_headless(args: CliArgs) -> Result<()> {
@@ -108,18 +369,35 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
         args.device
     };
 
+    let so = Stream::Stdout;
     println!(
-        "connector={} duration={duration_secs}s sizes={sizes:?}",
-        connector,
+        "{}={} {}={} {}={}",
+        "connector".if_supports_color(so, |t| t.cyan()),
+        connector
+            .to_string()
+            .if_supports_color(so, |t| { t.style(Style::new().bright_white().bold()) }),
+        "duration".if_supports_color(so, |t| t.cyan()),
+        format!("{duration_secs}s")
+            .if_supports_color(so, |t| { t.style(Style::new().bright_white().bold()) }),
+        "sizes".if_supports_color(so, |t| t.cyan()),
+        format!("{sizes:?}").if_supports_color(so, |t| t.bright_white()),
     );
 
     let test = SpeedTest::new(connector, device)?;
 
     let mut summaries = Vec::with_capacity(sizes.len());
 
-    for &size in &sizes {
+    for (idx, &size) in sizes.iter().enumerate() {
+        if idx > 0 {
+            print_between_read_size_sections(so);
+        }
         let label = size_label(size);
-        println!("read size {label} ({size} B)");
+        println!(
+            "{} {} ({})",
+            "read size".if_supports_color(so, |t| t.style(Style::new().green().bold())),
+            label.if_supports_color(so, |t| { t.style(Style::new().bright_yellow().bold()) }),
+            format!("{size} B").if_supports_color(so, |t| t.dimmed()),
+        );
         let (tx, mut rx) = mpsc::channel(256);
         let print = tokio::spawn(async move {
             let mut sum_tp = 0.0f64;
@@ -128,9 +406,24 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
             let mut samples = 0u64;
 
             while let Some((tp, rps, elapsed, sz, lat)) = rx.recv().await {
+                let t_cell = format!("t={elapsed:6.1}s");
+                let mib_cell = format!("{tp:8.2} MiB/s");
+                let rps_cell = format!("{rps:8} r/s");
+                let lat_cell = format!("{lat:8.1}");
+                let sz_l = size_label(sz);
                 println!(
-                    "  t={elapsed:6.1}s  {tp:8.2} MiB/s  {rps:8} r/s  {lat:8.1} μs  ({})",
-                    size_label(sz)
+                    "  {}  {}  {}  {} μs  {}",
+                    t_cell.if_supports_color(Stream::Stdout, |t| {
+                        t.style(Style::new().bright_blue().bold())
+                    }),
+                    mib_cell.if_supports_color(Stream::Stdout, |t| {
+                        t.style(Style::new().bright_green().bold())
+                    }),
+                    rps_cell.if_supports_color(Stream::Stdout, |t| t.cyan()),
+                    lat_cell.if_supports_color(Stream::Stdout, |t| t.magenta()),
+                    sz_l.if_supports_color(Stream::Stdout, |t| {
+                        t.style(Style::new().bright_yellow().bold())
+                    }),
                 );
                 sum_tp += tp;
                 sum_rps += rps as f64;
@@ -179,15 +472,45 @@ fn print_summary(summaries: &[SizeSummary]) {
         return;
     }
 
-    println!("\nSummary (averages over emitted samples):");
-    println!("Size        Avg MiB/s     Avg r/s      Avg μs   Samples");
-    println!("----------  ----------  ----------  ----------  -------");
+    let so = Stream::Stdout;
+    println!(
+        "\n{}",
+        "Summary (averages over emitted samples):"
+            .if_supports_color(so, |t| t.style(Style::new().bright_blue().bold())),
+    );
+    println!(
+        "{}  {}  {}  {}  {}",
+        format!("{:<10}", "Size")
+            .if_supports_color(so, |t| t.style(Style::new().bright_yellow().bold())),
+        format!("{:>10}", "Avg MiB/s")
+            .if_supports_color(so, |t| t.style(Style::new().bright_green().bold())),
+        format!("{:>10}", "Avg r/s").if_supports_color(so, |t| t.style(Style::new().cyan().bold())),
+        format!("{:>10}", "Avg μs")
+            .if_supports_color(so, |t| t.style(Style::new().magenta().bold())),
+        format!("{:>7}", "Samples").if_supports_color(so, |t| t.style(Style::new().bold())),
+    );
+    println!(
+        "{}  {}  {}  {}  {}",
+        format!("{:<10}", "----------").if_supports_color(so, |t| t.dimmed()),
+        format!("{:>10}", "----------").if_supports_color(so, |t| t.dimmed()),
+        format!("{:>10}", "----------").if_supports_color(so, |t| t.dimmed()),
+        format!("{:>10}", "----------").if_supports_color(so, |t| t.dimmed()),
+        format!("{:>7}", "-------").if_supports_color(so, |t| t.dimmed()),
+    );
 
     for s in summaries {
-        let size_label = size_label(s.size_bytes);
+        let sz = format!("{:<10}", size_label(s.size_bytes));
+        let mib = format!("{:>10.2}", s.avg_mib_s);
+        let rps = format!("{:>10.0}", s.avg_reads_s);
+        let lat = format!("{:>10.1}", s.avg_latency_us);
+        let n = format!("{:>7}", s.samples);
         println!(
-            "{:<10}  {:>10.2}  {:>10.0}  {:>10.1}  {:>7}",
-            size_label, s.avg_mib_s, s.avg_reads_s, s.avg_latency_us, s.samples
+            "{}  {}  {}  {}  {}",
+            sz.if_supports_color(so, |t| t.style(Style::new().bright_yellow().bold())),
+            mib.if_supports_color(so, |t| t.style(Style::new().bright_green().bold())),
+            rps.if_supports_color(so, |t| t.cyan()),
+            lat.if_supports_color(so, |t| t.magenta()),
+            n.if_supports_color(so, |t| t.bright_white()),
         );
     }
 }
@@ -201,7 +524,12 @@ fn size_label(size: usize) -> String {
 }
 
 pub fn prompt_exit() -> Result<()> {
-    io::stdout().write_all(b"\nBenchmark finished. Press Enter to exit.\n")?;
+    println!(
+        "\n{} {}",
+        "Benchmark finished."
+            .if_supports_color(Stream::Stdout, |t| t.style(Style::new().green().bold())),
+        "Press Enter to exit.".if_supports_color(Stream::Stdout, |t| t.dimmed()),
+    );
     io::stdout().flush()?;
     let mut line = String::new();
     io::stdin().read_line(&mut line)?;
@@ -262,5 +590,39 @@ mod tests {
     fn avg_handles_empty() {
         assert_eq!(avg(123.0, 0), 0.0);
         assert_eq!(avg(10.0, 2), 5.0);
+    }
+
+    #[test]
+    fn default_cli_args_matches_clap_equivalent() {
+        let d = default_cli_args();
+        assert!(matches!(d.connector, CliConnector::Pcileech));
+        assert_eq!(d.device, "FPGA");
+        assert_eq!(d.duration, 10);
+        assert!(d.sizes.is_none());
+    }
+
+    #[test]
+    fn parse_sizes_csv_accepts_spaces() {
+        assert_eq!(
+            parse_sizes_csv_trimmed("4096, 8192 ,16384").unwrap(),
+            vec![4096, 8192, 16384]
+        );
+    }
+
+    #[test]
+    fn parse_sizes_csv_rejects_zero() {
+        assert!(parse_sizes_csv_trimmed("4096,0").is_err());
+    }
+
+    #[test]
+    fn sizes_from_interactive_whitespace_is_none() {
+        assert!(sizes_from_interactive_input("").unwrap().is_none());
+        assert!(sizes_from_interactive_input("   ").unwrap().is_none());
+    }
+
+    #[test]
+    fn sizes_from_interactive_nonempty_is_some() {
+        let v = sizes_from_interactive_input("1024,2048").unwrap().unwrap();
+        assert_eq!(v, vec![1024, 2048]);
     }
 }

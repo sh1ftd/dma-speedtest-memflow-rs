@@ -7,7 +7,7 @@ cargo-features = ["profile-rustflags"]
     authors = ["Shifty <contact@shifty.cloud>"]
     repository = "https://github.com/sh1ftd/dma-speedtest-memflow-rs"
     license = "AGPL-3.0"
-    version = "2.3.5"
+    version = "2.3.6"
     edition = "2024"
 
 [lib]
@@ -54,6 +54,9 @@ cargo-features = ["profile-rustflags"]
     egui_plot = "0.35"
     egui-phosphor = "0.12"
     image = "0.25"
+    owo-colors = { version = "4", default-features = false, features = ["supports-colors"] }
+    crossterm = { version = "0.29", default-features = false, features = ["events", "windows"] }
+    dialoguer = "0.12"
 
 [features]
     # cargo build --release --features branding
