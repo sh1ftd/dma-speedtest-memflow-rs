@@ -87,7 +87,7 @@ fn avg(sum: f64, n: u64) -> f64 {
 /// Columns for one live stats row (CLI applies color per column).
 pub fn live_sample_columns(sample: &BenchSample) -> [String; 5] {
     [
-        format!("t={:6.1}s", sample.elapsed_secs),
+        format!("{:6.1}s", sample.elapsed_secs),
         format!("{:8.2} MiB/s", sample.throughput_mib_s),
         format!("{:8} ops/s", sample.ops_per_sec),
         format!("{:8.1} μs", sample.latency_us),
