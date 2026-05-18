@@ -5,13 +5,19 @@ use crate::ui::console::log_to_console;
 
 impl SpeedTestApp {
     pub fn start_test_impl(&mut self) {
+        if !self.can_start_test() {
+            return;
+        }
+
         self.is_connecting = true;
         self.error_message = None;
         self.show_error_modal = false;
         self.error_modal_message.clear();
         self.results.lock().unwrap().clear();
+        self.probe_targets = None;
         self.current_throughput = 0.0;
-        self.current_reads = 0;
+        self.current_ops_per_sec = 0;
+        self.current_bench_op = None;
         self.current_latency = 0.0;
         self.max_throughput = 0.0;
         self.test_start_time = None;
@@ -19,8 +25,17 @@ impl SpeedTestApp {
         self.test_end_time = None;
         self.current_test_size = None;
         self.completed_chunks.clear();
+        self.last_console_stats_log = None;
 
-        let rx = start_connect(self.connector, self.pcileech_device.clone(), &self.console);
+        let bench_mode = self.bench_mode;
+        let max_chunk = crate::bench_config::max_enabled_chunk_bytes(&self.test_sizes);
+        let rx = start_connect(
+            self.connector,
+            self.pcileech_device.clone(),
+            bench_mode,
+            max_chunk,
+            &self.console,
+        );
         self.connect_rx = Some(rx);
     }
 
@@ -50,6 +65,12 @@ impl SpeedTestApp {
 
         match result {
             Ok(test) => {
+                let targets = test.probe_targets();
+                self.probe_targets = Some(targets);
+                for line in targets.connect_detail_lines() {
+                    log_to_console(&self.console, &line);
+                }
+
                 self.is_running = true;
                 self.test_start_time = Some(std::time::Instant::now());
                 self.overall_test_start_time = Some(std::time::Instant::now());
@@ -60,14 +81,14 @@ impl SpeedTestApp {
                 self.modal_rx = Some(modal_rx);
 
                 let test_clone = test.clone();
-                start_test_from_connected(
+                self.bench_done_rx = Some(start_test_from_connected(
                     test_clone,
                     self.duration,
                     &self.test_sizes,
                     &self.console,
                     modal_tx,
                     stats_tx,
-                );
+                ));
 
                 self.test = Some(test);
             }
@@ -81,27 +102,52 @@ impl SpeedTestApp {
     }
 
     pub fn stop_test_impl(&mut self) {
+        if let Some(test) = &self.test {
+            test.request_cancel();
+        }
+
         self.is_running = false;
         self.test = None;
+        self.probe_targets = None;
         self.stats_rx = None;
 
         if let Some(overall_start_time) = self.overall_test_start_time {
-            let final_time = overall_start_time.elapsed().as_secs_f64();
-            self.test_end_time = Some(final_time);
+            self.test_end_time = Some(overall_start_time.elapsed().as_secs_f64());
+        }
 
-            if let Some(current_size) = self.current_test_size
-                && !self
-                    .completed_chunks
-                    .iter()
-                    .any(|(s, _)| *s == current_size)
-            {
-                self.completed_chunks.push((current_size, final_time));
-            }
+        if let Some(start_time) = self.test_start_time
+            && let Some(current_op) = self.current_bench_op
+            && let Some(current_size) = self.current_test_size
+            && !self
+                .completed_chunks
+                .iter()
+                .any(|(o, s, _)| *o == current_op && *s == current_size)
+        {
+            self.completed_chunks.push((
+                current_op,
+                current_size,
+                start_time.elapsed().as_secs_f64(),
+            ));
         }
         self.test_start_time = None;
         self.overall_test_start_time = None;
         self.current_test_size = None;
+        self.current_bench_op = None;
         self.modal_rx = None;
         log_to_console(&self.console, "Test stopped");
+    }
+
+    pub fn poll_bench_thread_finished(&mut self) {
+        let rx = match self.bench_done_rx.as_ref() {
+            Some(rx) => rx,
+            None => return,
+        };
+
+        match rx.try_recv() {
+            Ok(()) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.bench_done_rx = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
     }
 }

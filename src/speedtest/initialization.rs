@@ -1,19 +1,43 @@
+use super::bench::BenchMode;
 use super::connector::Connector;
+use super::probe_targets::{TARGET_PROCESS, TARGET_READ_MODULE};
+use super::write_target::{self, MIN_WRITE_REGION_BYTES};
 use anyhow::Result;
 use memflow::{plugins::Inventory, prelude::v1::*};
 
-const TARGET_PROCESS: &str = "explorer.exe";
-const TARGET_MODULE: &str = "ntdll.dll";
+pub struct SpeedTestInit {
+    pub process: IntoProcessInstanceArcBox<'static>,
+    pub read_addr: Address,
+    pub write_addr: Option<Address>,
+    pub write_region_bytes: Option<umem>,
+}
 
 pub(super) fn initialize_speedtest(
     connector: Connector,
     pcileech_device: String,
-) -> Result<(IntoProcessInstanceArcBox<'static>, Address)> {
+    mode: BenchMode,
+    max_chunk_bytes: usize,
+) -> Result<SpeedTestInit> {
     let os = initialize_os(connector, &pcileech_device)?;
     let mut process = find_target_process(os)?;
-    let test_addr = find_module_address(&mut process)?;
+    let read_addr = find_module_address(&mut process)?;
 
-    Ok((process, test_addr))
+    let min_write_bytes = MIN_WRITE_REGION_BYTES.max(max_chunk_bytes);
+
+    let (write_addr, write_region_bytes) = if mode.needs_write_target() {
+        let (addr, region) =
+            write_target::resolve_safe_write_target(&mut process, read_addr, min_write_bytes)?;
+        (Some(addr), Some(region))
+    } else {
+        (None, None)
+    };
+
+    Ok(SpeedTestInit {
+        process,
+        read_addr,
+        write_addr,
+        write_region_bytes,
+    })
 }
 
 fn initialize_os(connector: Connector, pcileech_device: &str) -> Result<OsInstanceArcBox<'static>> {
@@ -57,7 +81,7 @@ fn find_target_process(
 }
 
 fn find_module_address(process: &mut IntoProcessInstanceArcBox<'_>) -> Result<Address> {
-    let addr = process.module_by_name(TARGET_MODULE)?.base;
+    let addr = process.module_by_name(TARGET_READ_MODULE)?.base;
     Ok(addr)
 }
 

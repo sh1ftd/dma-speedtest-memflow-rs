@@ -1,11 +1,12 @@
+use crate::speedtest::{BenchOp, BenchSample, BenchStats, format_console_log_line};
 use crate::ui::console::{self, ConsoleWindow};
-use crate::ui::helpers::get_size_label;
+use crate::ui::constants::CONSOLE_STATS_LOG_INTERVAL_SECS;
 use crate::ui::types::{StatsUpdateParams, TestResults};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 
 pub fn handle_stats_update(
-    stats_rx: &mut mpsc::Receiver<(f64, u64, f64, usize, f64)>,
+    stats_rx: &mut mpsc::Receiver<BenchStats>,
     params: &mut StatsUpdateParams<'_>,
     results: &TestResults,
     console: &ConsoleWindow,
@@ -14,7 +15,7 @@ pub fn handle_stats_update(
 
     while let Some(update) = try_recv(stats_rx) {
         match update {
-            StatsUpdate::Data(data) => process_stats(data, params, results, console),
+            StatsUpdate::Data(sample) => apply_sample(sample, params, results, console),
             StatsUpdate::Closed => {
                 stats_closed = true;
                 break;
@@ -30,124 +31,139 @@ pub fn handle_stats_update(
     stats_closed
 }
 
-struct StatsData {
-    throughput: f64,
-    reads_per_sec: u64,
-    read_size: usize,
-    latency_us: f64,
-}
-
 enum StatsUpdate {
-    Data(StatsData),
+    Data(BenchSample),
     Closed,
     Pending,
 }
 
-fn try_recv(stats_rx: &mut mpsc::Receiver<(f64, u64, f64, usize, f64)>) -> Option<StatsUpdate> {
+fn try_recv(stats_rx: &mut mpsc::Receiver<BenchStats>) -> Option<StatsUpdate> {
     match stats_rx.try_recv() {
-        Ok((throughput, reads_per_sec, _elapsed_secs, read_size, latency_us)) => {
-            Some(StatsUpdate::Data(StatsData {
-                throughput,
-                reads_per_sec,
-                read_size,
-                latency_us,
-            }))
-        }
+        Ok(tuple) => Some(StatsUpdate::Data(BenchSample::from_tuple(tuple))),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Some(StatsUpdate::Pending),
         Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Some(StatsUpdate::Closed),
     }
 }
 
-fn process_stats(
-    data: StatsData,
+fn apply_sample(
+    sample: BenchSample,
     params: &mut StatsUpdateParams<'_>,
     results: &TestResults,
     console: &ConsoleWindow,
 ) {
-    record_chunk_completion(params, data.read_size);
+    let prev_op = *params.current_bench_op;
+    let prev_size = *params.current_test_size;
 
-    *params.current_throughput = data.throughput;
-    *params.current_reads = data.reads_per_sec;
-    *params.current_latency = data.latency_us;
+    record_chunk_completion(params, prev_op, prev_size, sample.op, sample.chunk_bytes);
 
-    if params.current_test_size.as_ref().copied() != Some(data.read_size) {
+    *params.current_throughput = sample.throughput_mib_s;
+    *params.current_ops_per_sec = sample.ops_per_sec;
+    *params.current_latency = sample.latency_us;
+    *params.current_bench_op = Some(sample.op);
+
+    if prev_op != Some(sample.op) || prev_size != Some(sample.chunk_bytes) {
         *params.test_start_time = Some(Instant::now());
-        *params.current_test_size = Some(data.read_size);
+        *params.current_test_size = Some(sample.chunk_bytes);
     }
 
-    let max_throughput = (*params.max_throughput).max(data.throughput);
-    *params.max_throughput = max_throughput;
+    *params.max_throughput = (*params.max_throughput).max(sample.throughput_mib_s);
 
-    log_stats(console, &data);
-    update_results(results, params, &data);
+    if should_log_live_sample(params, prev_op, prev_size, sample.op, sample.chunk_bytes) {
+        console::log_to_console(console, &format_console_log_line(&sample));
+        *params.last_console_stats_log = Some(Instant::now());
+    }
+
+    append_plot_point(results, params, &sample);
 }
 
-fn record_chunk_completion(params: &mut StatsUpdateParams<'_>, read_size: usize) {
-    if let Some(current_size) = (*params.current_test_size)
-        && current_size != read_size
-        && !params
-            .completed_chunks
-            .iter()
-            .any(|(size, _)| *size == current_size)
-        && let Some(start_time) = *params.test_start_time
+fn should_log_live_sample(
+    params: &StatsUpdateParams<'_>,
+    prev_op: Option<BenchOp>,
+    prev_size: Option<usize>,
+    op: BenchOp,
+    size: usize,
+) -> bool {
+    let chunk_changed = prev_op != Some(op) || prev_size != Some(size);
+    if chunk_changed {
+        return true;
+    }
+
+    let interval = Duration::from_secs_f64(CONSOLE_STATS_LOG_INTERVAL_SECS);
+    params
+        .last_console_stats_log
+        .map(|t| t.elapsed() >= interval)
+        .unwrap_or(true)
+}
+
+fn record_chunk_completion(
+    params: &mut StatsUpdateParams<'_>,
+    prev_op: Option<BenchOp>,
+    prev_size: Option<usize>,
+    new_op: BenchOp,
+    new_size: usize,
+) {
+    let Some((current_op, current_size)) = prev_op.zip(prev_size) else {
+        return;
+    };
+    if current_op == new_op && current_size == new_size {
+        return;
+    }
+    if params
+        .completed_chunks
+        .iter()
+        .any(|(o, s, _)| *o == current_op && *s == current_size)
     {
-        let completion_time = start_time.elapsed().as_secs_f64();
-        params
-            .completed_chunks
-            .push((current_size, completion_time));
+        return;
     }
+    let Some(start_time) = *params.test_start_time else {
+        return;
+    };
+    params
+        .completed_chunks
+        .push((current_op, current_size, start_time.elapsed().as_secs_f64()));
 }
 
-fn log_stats(console: &ConsoleWindow, data: &StatsData) {
-    console::log_to_console(
-        console,
-        &format!(
-            "Throughput: {:.2} MB/s, Reads/s: {}, Latency: {:.1} μs, Size: {}",
-            data.throughput,
-            data.reads_per_sec,
-            data.latency_us,
-            get_size_label(data.read_size)
-        ),
-    );
-}
-
-fn update_results(results: &TestResults, params: &StatsUpdateParams<'_>, data: &StatsData) {
+fn append_plot_point(results: &TestResults, params: &StatsUpdateParams<'_>, sample: &BenchSample) {
     if let Ok(mut results_guard) = results.lock() {
-        let entry_index = results_guard
+        if !results_guard
             .iter()
-            .position(|(size, _)| *size == data.read_size);
-
-        if entry_index.is_none() {
-            results_guard.push((data.read_size, (Vec::new(), Vec::new(), Vec::new())));
+            .any(|(op, size, _)| *op == sample.op && *size == sample.chunk_bytes)
+        {
+            results_guard.push((
+                sample.op,
+                sample.chunk_bytes,
+                (Vec::new(), Vec::new(), Vec::new()),
+            ));
         }
 
         if let Some(entry) = results_guard
             .iter_mut()
-            .find(|(size, _)| *size == data.read_size)
+            .find(|(op, size, _)| *op == sample.op && *size == sample.chunk_bytes)
         {
             let elapsed_secs = (*params.test_start_time)
                 .map(|t| t.elapsed().as_secs_f64())
                 .unwrap_or(0.0);
-            let reads_per_sec = data.reads_per_sec as f64;
 
-            entry.1.0.push((elapsed_secs, data.throughput));
-            entry.1.1.push((elapsed_secs, reads_per_sec));
-            entry.1.2.push((elapsed_secs, data.latency_us));
+            entry.2.0.push((elapsed_secs, sample.throughput_mib_s));
+            entry.2.1.push((elapsed_secs, sample.ops_per_sec as f64));
+            entry.2.2.push((elapsed_secs, sample.latency_us));
         }
     }
 }
 
 fn finalize_current_chunk(params: &mut StatsUpdateParams<'_>) {
-    if let Some(current_size) = (*params.current_test_size)
+    if let Some(current_op) = *params.current_bench_op
+        && let Some(current_size) = *params.current_test_size
         && !params
             .completed_chunks
             .iter()
-            .any(|(s, _)| *s == current_size)
+            .any(|(o, s, _)| *o == current_op && *s == current_size)
         && let Some(start_time) = *params.test_start_time
     {
-        let completion_time = start_time.elapsed().as_secs_f64();
-        params
-            .completed_chunks
-            .push((current_size, completion_time));
+        params.completed_chunks.push((
+            current_op,
+            current_size,
+            start_time.elapsed().as_secs_f64(),
+        ));
     }
 }

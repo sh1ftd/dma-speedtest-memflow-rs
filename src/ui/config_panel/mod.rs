@@ -1,3 +1,4 @@
+mod bench_mode;
 mod connector_section;
 mod header;
 mod panel;

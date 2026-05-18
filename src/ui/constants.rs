@@ -31,6 +31,12 @@ pub const PLOT_RESIZE_INITIAL_DELAY: f32 = 0.3;
 pub const PLOT_RESIZE_REPEAT_RATE: f32 = 0.055;
 pub const PLOT_RESIZEE_INCREMENT: f32 = 10.0;
 
+/// Max lines kept in the GUI console deque.
+pub const MAX_CONSOLE_LOG_ENTRIES: usize = 2000;
+
+/// Minimum interval between live stats lines for the same chunk (seconds).
+pub const CONSOLE_STATS_LOG_INTERVAL_SECS: f64 = 1.0;
+
 // Plot options
 pub const PLOT_SHOW_GRID: bool = true;
 pub const PLOT_ALLOW_DRAG: bool = false;

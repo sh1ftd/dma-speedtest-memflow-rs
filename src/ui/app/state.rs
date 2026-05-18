@@ -3,7 +3,7 @@ use std::time::Instant;
 
 use tokio::sync::mpsc;
 
-use crate::speedtest::{Connector, SpeedTest};
+use crate::speedtest::{BenchMode, BenchStats, Connector, ProbeTargets, SpeedTest};
 use crate::ui::console::ConsoleWindow;
 
 use super::super::constants::DEFAULT_PLOT_HEIGHT;
@@ -18,7 +18,9 @@ pub struct SpeedTestApp {
     pub connector: Connector,
     pub pcileech_device: String,
     pub duration: u64,
+    pub bench_mode: BenchMode,
     pub test: Option<SpeedTest>,
+    pub probe_targets: Option<ProbeTargets>,
     pub results: TestResults,
     pub is_running: bool,
     pub is_connecting: bool,
@@ -26,17 +28,18 @@ pub struct SpeedTestApp {
     pub was_running: bool,
     pub error_message: Option<String>,
     pub current_throughput: f64,
-    pub current_reads: u64,
+    pub current_ops_per_sec: u64,
+    pub current_bench_op: Option<crate::speedtest::BenchOp>,
     pub current_latency: f64,
     pub show_config: bool,
     pub was_show_config: bool,
     #[allow(clippy::type_complexity)]
-    pub stats_rx: Option<mpsc::Receiver<(f64, u64, f64, usize, f64)>>, // (throughput, reads_per_sec, elapsed_secs, read_size, latency_us)
+    pub stats_rx: Option<mpsc::Receiver<BenchStats>>,
     pub test_start_time: Option<Instant>,
     pub overall_test_start_time: Option<Instant>,
     pub test_end_time: Option<f64>,
     pub current_test_size: Option<usize>,
-    pub completed_chunks: Vec<(usize, f64)>,
+    pub completed_chunks: Vec<(crate::speedtest::BenchOp, usize, f64)>,
     pub max_throughput: f64,
     pub console: ConsoleWindow,
     pub ui_scale: f32,
@@ -46,12 +49,15 @@ pub struct SpeedTestApp {
     pub was_error_modal: bool,
     pub error_modal_message: String,
     pub modal_rx: Option<std::sync::mpsc::Receiver<String>>,
+    /// Set while the benchmark thread is alive; cleared when it exits.
+    pub bench_done_rx: Option<std::sync::mpsc::Receiver<()>>,
     pub custom_plot_width: f32,
     pub custom_plot_height: f32,
     pub plot_resize_start_time: Option<std::time::Instant>,
     pub plot_resize_direction: PlotResizeDirection,
     pub plot_resize_last_repeat: Option<std::time::Instant>,
     pub center_window_frames: u8,
+    pub last_console_stats_log: Option<std::time::Instant>,
     #[cfg(feature = "branding")]
     pub branding_manager: BrandingManager,
 }
@@ -63,20 +69,31 @@ impl Default for SpeedTestApp {
 }
 
 impl SpeedTestApp {
+    pub fn bench_thread_active(&self) -> bool {
+        self.bench_done_rx.is_some()
+    }
+
+    pub fn can_start_test(&self) -> bool {
+        !self.is_connecting && !self.bench_thread_active()
+    }
+
     pub fn new() -> Self {
         Self {
             connector: Connector::default(),
             pcileech_device: String::new(),
             duration: 10,
+            bench_mode: BenchMode::Read,
             test: None,
-            results: Arc::new(Mutex::new(Vec::new())), // (read_size, (throughput_points, reads_points, latency_points))
+            probe_targets: None,
+            results: Arc::new(Mutex::new(Vec::new())),
             is_running: false,
             is_connecting: false,
             connect_rx: None,
             was_running: false,
             error_message: None,
             current_throughput: 0.0,
-            current_reads: 0,
+            current_ops_per_sec: 0,
+            current_bench_op: None,
             current_latency: 0.0,
             show_config: true,
             was_show_config: true,
@@ -94,24 +111,15 @@ impl SpeedTestApp {
             was_error_modal: false,
             error_modal_message: String::new(),
             modal_rx: None,
+            bench_done_rx: None,
             custom_plot_width: DEFAULT_PLOT_WIDTH,
             custom_plot_height: DEFAULT_PLOT_HEIGHT,
             plot_resize_start_time: None,
             plot_resize_direction: PlotResizeDirection::None,
             plot_resize_last_repeat: None,
             center_window_frames: 0,
-            // Defaults: only 4 / 8 / 16 / 32 KiB enabled (same list as `cli::DEFAULT_READ_SIZES`).
-            test_sizes: vec![
-                (512, false),    // 512 bytes
-                (1024, false),   // 1KB
-                (2048, false),   // 2KB
-                (4096, true),    // 4KB - selected by default
-                (8192, true),    // 8KB - selected by default
-                (16384, true),   // 16KB - selected by default
-                (32768, true),   // 32KB - selected by default
-                (65536, false),  // 64KB
-                (131072, false), // 128KB
-            ],
+            last_console_stats_log: None,
+            test_sizes: crate::bench_config::default_gui_chunk_sizes(),
             #[cfg(feature = "branding")]
             branding_manager: BrandingManager::new(),
         }

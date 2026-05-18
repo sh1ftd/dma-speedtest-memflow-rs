@@ -44,12 +44,14 @@ fn chunk_progress_row(
     params: &ResultsPanelParams<'_>,
     size: usize,
 ) -> (f32, String, egui::Color32) {
-    if let Some((_, completion_time)) = params
-        .test_state
-        .completed_chunks
-        .iter()
-        .find(|(s, _)| s == &size)
-    {
+    if size_fully_complete(params, size) {
+        let completion_time = params
+            .test_state
+            .completed_chunks
+            .iter()
+            .filter(|(_, s, _)| *s == size)
+            .map(|(_, _, t)| *t)
+            .fold(0.0_f64, f64::max);
         return (
             1.0,
             format!(
@@ -74,11 +76,17 @@ fn chunk_progress_row(
             } else {
                 egui::Color32::from_rgb(52, 152, 219)
             };
+            let op_suffix = params
+                .test_state
+                .current_bench_op
+                .map(|o| format!(" ({})", o.label()))
+                .unwrap_or_default();
             return (
                 progress,
                 format!(
-                    "{}: {:.1}s / {}s",
+                    "{}{}: {:.1}s / {}s",
                     get_size_label(size),
+                    op_suffix,
                     elapsed,
                     params.duration
                 ),
@@ -97,4 +105,19 @@ fn chunk_progress_row(
         format!("{}: Waiting...", get_size_label(size)),
         egui::Color32::BLACK,
     )
+}
+
+fn size_fully_complete(params: &ResultsPanelParams<'_>, size: usize) -> bool {
+    params
+        .test_state
+        .bench_mode
+        .ops_for_size()
+        .iter()
+        .all(|op| {
+            params
+                .test_state
+                .completed_chunks
+                .iter()
+                .any(|(o, s, _)| o == op && *s == size)
+        })
 }

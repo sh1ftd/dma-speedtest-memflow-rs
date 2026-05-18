@@ -51,7 +51,7 @@ impl SpeedTestApp {
             .with_resizable(true)
             .with_decorations(true)
             .with_icon(icon_data.map(std::sync::Arc::new).unwrap_or_default())
-            .with_title("DMA Speed Test");
+            .with_title(format!("DMA Speed Test v{}", env!("CARGO_PKG_VERSION")));
 
         // Center the window on the screen
         if let Some(monitor_size) = get_primary_monitor_size() {
@@ -61,7 +61,10 @@ impl SpeedTestApp {
         }
 
         #[cfg(feature = "branding")]
-        let viewport = viewport.with_title(branding::get_branded_title("DMA Speed Test", "2.0.0"));
+        let viewport = viewport.with_title(branding::get_branded_title(
+            "DMA Speed Test",
+            env!("CARGO_PKG_VERSION"),
+        ));
 
         let mut wgpu_options = eframe::egui_wgpu::WgpuConfiguration::default();
 
@@ -94,7 +97,7 @@ impl SpeedTestApp {
                 egui_phosphor::add_to_fonts(&mut fonts, egui_phosphor::Variant::Regular);
                 cc.egui_ctx.set_fonts(fonts);
 
-                #[allow(unused_mut)]
+                #[allow(unused_mut)] // Visuals is used in branding feature
                 let mut visuals = egui::Visuals::dark();
 
                 #[cfg(feature = "branding")]
@@ -124,7 +127,7 @@ impl eframe::App for SpeedTestApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Force dark mode if system is overriding it
         if !ctx.global_style().visuals.dark_mode {
-            #[allow(unused_mut)]
+            #[allow(unused_mut)] // Visuals is used in branding feature
             let mut visuals = egui::Visuals::dark();
 
             #[cfg(feature = "branding")]
@@ -205,12 +208,14 @@ impl eframe::App for SpeedTestApp {
             {
                 let mut stats_params = StatsUpdateParams {
                     current_throughput: &mut self.current_throughput,
-                    current_reads: &mut self.current_reads,
+                    current_ops_per_sec: &mut self.current_ops_per_sec,
                     current_latency: &mut self.current_latency,
+                    current_bench_op: &mut self.current_bench_op,
                     current_test_size: &mut self.current_test_size,
                     test_start_time: &mut self.test_start_time,
                     max_throughput: &mut self.max_throughput,
                     completed_chunks: &mut self.completed_chunks,
+                    last_console_stats_log: &mut self.last_console_stats_log,
                 };
 
                 let stats_closed =
@@ -231,7 +236,9 @@ impl eframe::App for SpeedTestApp {
             }
         }
 
-        if self.is_running || self.is_connecting {
+        self.poll_bench_thread_finished();
+
+        if self.is_running || self.is_connecting || self.bench_thread_active() {
             ctx.request_repaint();
         }
     }
@@ -265,9 +272,12 @@ impl eframe::App for SpeedTestApp {
                 branding::render_background(ui, &self.branding_manager);
 
                 let mut should_start_test = false;
+                let can_start = self.can_start_test();
+                let is_connecting = self.is_connecting;
                 let mut config_params = ConfigParams {
                     connector: &mut self.connector,
                     pcileech_device: &mut self.pcileech_device,
+                    bench_mode: &mut self.bench_mode,
                     duration: &mut self.duration,
                     ui_scale: &mut self.ui_scale,
                     ui_scale_text: &mut self.ui_scale_text,
@@ -275,6 +285,8 @@ impl eframe::App for SpeedTestApp {
                     show_error_modal: &mut self.show_error_modal,
                     error_modal_message: &mut self.error_modal_message,
                     show_config: &mut self.show_config,
+                    can_start,
+                    is_connecting,
                 };
                 render_config_panel(ui, &mut config_params, || should_start_test = true);
                 if should_start_test {
@@ -290,6 +302,7 @@ impl eframe::App for SpeedTestApp {
                 let mut should_start_test = false;
                 let mut should_toggle_console = false;
 
+                let can_restart = self.can_start_test();
                 let plot_controls = PlotControls {
                     custom_plot_width: &mut self.custom_plot_width,
                     custom_plot_height: &mut self.custom_plot_height,
@@ -300,9 +313,14 @@ impl eframe::App for SpeedTestApp {
 
                 let test_state = TestState {
                     is_running: self.is_running,
+                    is_connecting: self.is_connecting,
+                    can_restart,
+                    bench_mode: self.bench_mode,
                     current_throughput: self.current_throughput,
-                    current_reads: self.current_reads,
+                    current_ops_per_sec: self.current_ops_per_sec,
                     current_latency: self.current_latency,
+                    current_bench_op: self.current_bench_op,
+                    probe_targets: self.probe_targets,
                     current_test_size: self.current_test_size,
                     test_start_time: self.test_start_time,
                     test_end_time: self.test_end_time,

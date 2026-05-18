@@ -9,9 +9,17 @@ use std::{
 };
 use tokio::sync::mpsc;
 
-use crate::speedtest::{Connector, SpeedTest};
+use crate::bench_config::{
+    DEFAULT_CHUNK_SIZES, chunk_sizes_from_optional_csv, default_chunk_sizes_csv, format_chunk_size,
+    max_chunk_bytes_in_list,
+};
+use crate::speedtest::{
+    BenchMode, BenchOp, Connector, PassSummary, ProbeTargets, SpeedTest, drain_stats_channel,
+    live_sample_columns,
+};
 
-pub const DEFAULT_READ_SIZES: [usize; 4] = [4096, 8192, 16384, 32768];
+/// Alias for [`DEFAULT_CHUNK_SIZES`].
+pub const DEFAULT_READ_SIZES: [usize; 4] = DEFAULT_CHUNK_SIZES;
 
 /// Visual break between per-size benchmark sections in CLI output.
 const BETWEEN_READ_SIZE_SECTIONS: &str =
@@ -40,6 +48,24 @@ impl From<CliConnector> for Connector {
     }
 }
 
+#[derive(Copy, Clone, Default, Debug, clap::ValueEnum)]
+pub enum CliBenchMode {
+    #[default]
+    Read,
+    Write,
+    Both,
+}
+
+impl From<CliBenchMode> for BenchMode {
+    fn from(m: CliBenchMode) -> Self {
+        match m {
+            CliBenchMode::Read => BenchMode::Read,
+            CliBenchMode::Write => BenchMode::Write,
+            CliBenchMode::Both => BenchMode::Both,
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "cli-dma-speedtest-memflow-rs",
@@ -60,6 +86,9 @@ pub struct CliArgs {
     #[arg(long, default_value_t = 10, help = "Seconds per read size (1–60).")]
     pub duration: u64,
 
+    #[arg(long, value_enum, default_value_t = CliBenchMode::Read)]
+    pub mode: CliBenchMode,
+
     #[arg(
         long,
         value_delimiter = ',',
@@ -73,6 +102,7 @@ pub fn default_cli_args() -> CliArgs {
         connector: CliConnector::default(),
         device: "FPGA".to_owned(),
         duration: 10,
+        mode: CliBenchMode::Read,
         sizes: None,
     }
 }
@@ -123,9 +153,10 @@ pub fn print_startup_help() {
         "[10]",
         "seconds per read size (1–60)",
     );
+    row("--mode <MODE>", "[read]", "read | write | both");
     row(
         "--sizes <CSV_BYTES>",
-        "[4096,8192,16384,32768]",
+        &default_chunk_sizes_csv(),
         "optional override; replaces default list when set",
     );
     row("-h, --help", "", "print clap help");
@@ -221,35 +252,6 @@ fn timed_defaults_yes_no_prompt(so: Stream) -> Result<LaunchMenuChoice> {
     }
 }
 
-fn parse_sizes_csv_trimmed(input: &str) -> Result<Vec<usize>> {
-    let mut out = Vec::new();
-    for part in input.split(',') {
-        let t = part.trim();
-        if t.is_empty() {
-            continue;
-        }
-        let n: usize = t.parse().map_err(|_| {
-            anyhow::anyhow!("invalid read size {t:?} (expected positive integers, comma-separated)")
-        })?;
-        if n == 0 {
-            bail!("read sizes must be positive; got 0");
-        }
-        out.push(n);
-    }
-    if out.is_empty() {
-        bail!("no valid sizes in {:?}", input);
-    }
-    Ok(out)
-}
-
-fn sizes_from_interactive_input(s: &str) -> Result<Option<Vec<usize>>> {
-    let trimmed = s.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    Ok(Some(parse_sizes_csv_trimmed(trimmed)?))
-}
-
 /// Prompt Y/n for defaults with a **10 s** idle countdown (Yes). Non-TTY stdin/stdout returns [`default_cli_args`] immediately.
 pub fn interactive_launch_cli_args() -> Result<CliArgs> {
     use dialoguer::{Input, Select, theme::ColorfulTheme};
@@ -287,6 +289,19 @@ pub fn interactive_launch_cli_args() -> Result<CliArgs> {
 
             let theme = ColorfulTheme::default();
 
+            let mode_idx = Select::with_theme(&theme)
+                .with_prompt("Benchmark mode")
+                .items(["read", "write", "both"])
+                .default(0)
+                .interact()
+                .map_err(|e| anyhow::anyhow!("{e}"))?;
+            let mode = match mode_idx {
+                0 => CliBenchMode::Read,
+                1 => CliBenchMode::Write,
+                2 => CliBenchMode::Both,
+                _ => CliBenchMode::Read,
+            };
+
             let connector_idx = Select::with_theme(&theme)
                 .with_prompt("Connector")
                 .items(["pcileech", "native"])
@@ -322,11 +337,7 @@ pub fn interactive_launch_cli_args() -> Result<CliArgs> {
                 default_cli_args().device
             };
 
-            let sizes_default = DEFAULT_READ_SIZES
-                .iter()
-                .map(|n| n.to_string())
-                .collect::<Vec<_>>()
-                .join(",");
+            let sizes_default = default_chunk_sizes_csv();
 
             let sizes_str: String = Input::with_theme(&theme)
                 .with_prompt("Read sizes in bytes, comma-separated")
@@ -334,12 +345,13 @@ pub fn interactive_launch_cli_args() -> Result<CliArgs> {
                 .interact_text()
                 .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-            let sizes = sizes_from_interactive_input(sizes_str.trim())?;
+            let sizes = chunk_sizes_from_optional_csv(sizes_str.trim())?;
 
             Ok(CliArgs {
                 connector,
                 device,
                 duration,
+                mode,
                 sizes,
             })
         }
@@ -348,6 +360,7 @@ pub fn interactive_launch_cli_args() -> Result<CliArgs> {
 
 pub async fn run_headless(args: CliArgs) -> Result<()> {
     let connector: Connector = args.connector.into();
+    let bench_mode: BenchMode = args.mode.into();
     let duration_secs = args.duration;
     if !(1..=60).contains(&duration_secs) {
         bail!("duration must be between 1 and 60 seconds");
@@ -356,7 +369,7 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
     let sizes: Vec<usize> = match args.sizes {
         Some(s) if s.is_empty() => bail!("sizes must contain at least one value when set"),
         Some(s) => s,
-        None => DEFAULT_READ_SIZES.to_vec(),
+        None => DEFAULT_CHUNK_SIZES.to_vec(),
     };
 
     let device_trim = args.device.trim();
@@ -370,8 +383,13 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
     };
 
     let so = Stream::Stdout;
+    let mode_str = match args.mode {
+        CliBenchMode::Read => "read",
+        CliBenchMode::Write => "write",
+        CliBenchMode::Both => "both",
+    };
     println!(
-        "{}={} {}={} {}={}",
+        "{}={} {}={} {}={} {}={}",
         "connector".if_supports_color(so, |t| t.cyan()),
         connector
             .to_string()
@@ -379,74 +397,53 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
         "duration".if_supports_color(so, |t| t.cyan()),
         format!("{duration_secs}s")
             .if_supports_color(so, |t| { t.style(Style::new().bright_white().bold()) }),
+        "mode".if_supports_color(so, |t| t.cyan()),
+        mode_str.if_supports_color(so, |t| t.bright_white()),
         "sizes".if_supports_color(so, |t| t.cyan()),
         format!("{sizes:?}").if_supports_color(so, |t| t.bright_white()),
     );
 
-    let test = SpeedTest::new(connector, device)?;
+    let max_chunk = max_chunk_bytes_in_list(&sizes);
+    let test = SpeedTest::new(connector, device, bench_mode, max_chunk)?;
+    print_probe_details(so, &test.probe_targets());
 
-    let mut summaries = Vec::with_capacity(sizes.len());
+    let mut summaries = Vec::new();
+    let mut first_block = true;
 
-    for (idx, &size) in sizes.iter().enumerate() {
-        if idx > 0 {
-            print_between_read_size_sections(so);
+    for &size in &sizes {
+        for &op in test.bench_mode().ops_for_size() {
+            if !first_block {
+                print_between_read_size_sections(so);
+            }
+            first_block = false;
+
+            let label = format_chunk_size(size);
+            println!(
+                "{} {} {} ({})",
+                op.label()
+                    .if_supports_color(so, |t| t.style(Style::new().green().bold())),
+                "size".if_supports_color(so, |t| t.white()),
+                label.if_supports_color(so, |t| { t.style(Style::new().bright_yellow().bold()) }),
+                format!("{size} B").if_supports_color(so, |t| t.dimmed()),
+            );
+            print_op_probe_detail(so, &test.probe_targets(), op, size);
+
+            let (tx, rx) = mpsc::channel(256);
+            let print = tokio::spawn(async move {
+                drain_stats_channel(rx, op, size, |sample| {
+                    print_colored_live_sample(sample);
+                })
+                .await
+            });
+
+            test.run_test_with_size(op, size, Duration::from_secs(duration_secs), tx, None)
+                .await?;
+
+            let summary = print
+                .await
+                .map_err(|e| anyhow::anyhow!("printer task: {e}"))?;
+            summaries.push(summary);
         }
-        let label = size_label(size);
-        println!(
-            "{} {} ({})",
-            "read size".if_supports_color(so, |t| t.style(Style::new().green().bold())),
-            label.if_supports_color(so, |t| { t.style(Style::new().bright_yellow().bold()) }),
-            format!("{size} B").if_supports_color(so, |t| t.dimmed()),
-        );
-        let (tx, mut rx) = mpsc::channel(256);
-        let print = tokio::spawn(async move {
-            let mut sum_tp = 0.0f64;
-            let mut sum_rps = 0.0f64;
-            let mut sum_lat = 0.0f64;
-            let mut samples = 0u64;
-
-            while let Some((tp, rps, elapsed, sz, lat)) = rx.recv().await {
-                let t_cell = format!("t={elapsed:6.1}s");
-                let mib_cell = format!("{tp:8.2} MiB/s");
-                let rps_cell = format!("{rps:8} r/s");
-                let lat_cell = format!("{lat:8.1}");
-                let sz_l = size_label(sz);
-                println!(
-                    "  {}  {}  {}  {} μs  {}",
-                    t_cell.if_supports_color(Stream::Stdout, |t| {
-                        t.style(Style::new().bright_blue().bold())
-                    }),
-                    mib_cell.if_supports_color(Stream::Stdout, |t| {
-                        t.style(Style::new().bright_green().bold())
-                    }),
-                    rps_cell.if_supports_color(Stream::Stdout, |t| t.cyan()),
-                    lat_cell.if_supports_color(Stream::Stdout, |t| t.magenta()),
-                    sz_l.if_supports_color(Stream::Stdout, |t| {
-                        t.style(Style::new().bright_yellow().bold())
-                    }),
-                );
-                sum_tp += tp;
-                sum_rps += rps as f64;
-                sum_lat += lat;
-                samples += 1;
-            }
-
-            SizeSummary {
-                size_bytes: size,
-                avg_mib_s: avg(sum_tp, samples),
-                avg_reads_s: avg(sum_rps, samples),
-                avg_latency_us: avg(sum_lat, samples),
-                samples,
-            }
-        });
-
-        test.run_test_with_size(size, Duration::from_secs(duration_secs), tx)
-            .await?;
-
-        let summary = print
-            .await
-            .map_err(|e| anyhow::anyhow!("printer task: {e}"))?;
-        summaries.push(summary);
     }
 
     print_summary(&summaries);
@@ -454,20 +451,20 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct SizeSummary {
-    size_bytes: usize,
-    avg_mib_s: f64,
-    avg_reads_s: f64,
-    avg_latency_us: f64,
-    samples: u64,
+fn print_colored_live_sample(sample: &crate::speedtest::BenchSample) {
+    let so = Stream::Stdout;
+    let [t, mib, ops, lat, sz] = live_sample_columns(sample);
+    println!(
+        "  {}  {}  {}  {}  {}",
+        t.if_supports_color(so, |c| c.style(Style::new().bright_blue().bold())),
+        mib.if_supports_color(so, |c| c.style(Style::new().bright_green().bold())),
+        ops.if_supports_color(so, |c| c.cyan()),
+        lat.if_supports_color(so, |c| c.magenta()),
+        sz.if_supports_color(so, |c| c.style(Style::new().bright_yellow().bold())),
+    );
 }
 
-fn avg(sum: f64, n: u64) -> f64 {
-    if n == 0 { 0.0 } else { sum / n as f64 }
-}
-
-fn print_summary(summaries: &[SizeSummary]) {
+fn print_summary(summaries: &[PassSummary]) {
     if summaries.is_empty() {
         return;
     }
@@ -479,18 +476,21 @@ fn print_summary(summaries: &[SizeSummary]) {
             .if_supports_color(so, |t| t.style(Style::new().bright_blue().bold())),
     );
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  {}  {}",
+        format!("{:<6}", "Op").if_supports_color(so, |t| t.style(Style::new().green().bold())),
         format!("{:<10}", "Size")
             .if_supports_color(so, |t| t.style(Style::new().bright_yellow().bold())),
         format!("{:>10}", "Avg MiB/s")
             .if_supports_color(so, |t| t.style(Style::new().bright_green().bold())),
-        format!("{:>10}", "Avg r/s").if_supports_color(so, |t| t.style(Style::new().cyan().bold())),
+        format!("{:>10}", "Avg ops/s")
+            .if_supports_color(so, |t| t.style(Style::new().cyan().bold())),
         format!("{:>10}", "Avg μs")
             .if_supports_color(so, |t| t.style(Style::new().magenta().bold())),
         format!("{:>7}", "Samples").if_supports_color(so, |t| t.style(Style::new().bold())),
     );
     println!(
-        "{}  {}  {}  {}  {}",
+        "{}  {}  {}  {}  {}  {}",
+        format!("{:<6}", "------").if_supports_color(so, |t| t.dimmed()),
         format!("{:<10}", "----------").if_supports_color(so, |t| t.dimmed()),
         format!("{:>10}", "----------").if_supports_color(so, |t| t.dimmed()),
         format!("{:>10}", "----------").if_supports_color(so, |t| t.dimmed()),
@@ -499,27 +499,44 @@ fn print_summary(summaries: &[SizeSummary]) {
     );
 
     for s in summaries {
-        let sz = format!("{:<10}", size_label(s.size_bytes));
+        let op = format!("{:<6}", s.op.label());
+        let sz = format!("{:<10}", format_chunk_size(s.chunk_bytes));
         let mib = format!("{:>10.2}", s.avg_mib_s);
-        let rps = format!("{:>10.0}", s.avg_reads_s);
+        let ops = format!("{:>10.0}", s.avg_ops_s);
         let lat = format!("{:>10.1}", s.avg_latency_us);
         let n = format!("{:>7}", s.samples);
         println!(
-            "{}  {}  {}  {}  {}",
+            "{}  {}  {}  {}  {}  {}",
+            op.if_supports_color(so, |t| t.style(Style::new().green().bold())),
             sz.if_supports_color(so, |t| t.style(Style::new().bright_yellow().bold())),
             mib.if_supports_color(so, |t| t.style(Style::new().bright_green().bold())),
-            rps.if_supports_color(so, |t| t.cyan()),
+            ops.if_supports_color(so, |t| t.cyan()),
             lat.if_supports_color(so, |t| t.magenta()),
             n.if_supports_color(so, |t| t.bright_white()),
         );
     }
 }
 
-fn size_label(size: usize) -> String {
-    if size >= 1024 {
-        format!("{} KiB", size / 1024)
-    } else {
-        format!("{size} B")
+fn print_probe_details(so: Stream, targets: &ProbeTargets) {
+    println!();
+    println!(
+        "{}",
+        "Probe targets (fixed; not configurable):"
+            .if_supports_color(so, |t| t.style(Style::new().bright_blue().bold())),
+    );
+    for line in targets.connect_detail_lines() {
+        println!("  {}", line.if_supports_color(so, |t| t.bright_white()),);
+    }
+    println!();
+}
+
+fn print_op_probe_detail(so: Stream, targets: &ProbeTargets, op: BenchOp, chunk_bytes: usize) {
+    let detail = match op {
+        BenchOp::Read => Some(targets.format_read_pass(chunk_bytes)),
+        BenchOp::Write => targets.format_write_pass(chunk_bytes),
+    };
+    if let Some(line) = detail {
+        println!("  {}", line.if_supports_color(so, |t| t.dimmed()),);
     }
 }
 
@@ -557,12 +574,7 @@ pub fn ensure_stdio_for_headless() {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::speedtest::Connector;
-
-    #[test]
-    fn default_read_sizes_are_expected() {
-        assert_eq!(DEFAULT_READ_SIZES, [4096, 8192, 16384, 32768]);
-    }
+    use crate::speedtest::{BenchMode, Connector};
 
     #[test]
     fn cli_connector_maps_to_speedtest_connector() {
@@ -573,56 +585,36 @@ mod tests {
     }
 
     #[test]
-    fn size_label_formats_bytes_under_1k() {
-        assert_eq!(size_label(0), "0 B");
-        assert_eq!(size_label(1), "1 B");
-        assert_eq!(size_label(512), "512 B");
-    }
-
-    #[test]
-    fn size_label_formats_kib_for_1024_and_above() {
-        assert_eq!(size_label(1024), "1 KiB");
-        assert_eq!(size_label(2048), "2 KiB");
-        assert_eq!(size_label(4096), "4 KiB");
-    }
-
-    #[test]
-    fn avg_handles_empty() {
-        assert_eq!(avg(123.0, 0), 0.0);
-        assert_eq!(avg(10.0, 2), 5.0);
-    }
-
-    #[test]
     fn default_cli_args_matches_clap_equivalent() {
         let d = default_cli_args();
         assert!(matches!(d.connector, CliConnector::Pcileech));
         assert_eq!(d.device, "FPGA");
         assert_eq!(d.duration, 10);
+        assert!(matches!(d.mode, CliBenchMode::Read));
         assert!(d.sizes.is_none());
     }
 
     #[test]
-    fn parse_sizes_csv_accepts_spaces() {
-        assert_eq!(
-            parse_sizes_csv_trimmed("4096, 8192 ,16384").unwrap(),
-            vec![4096, 8192, 16384]
-        );
+    fn cli_bench_mode_maps_to_speedtest_bench_mode() {
+        let read: BenchMode = CliBenchMode::Read.into();
+        let write: BenchMode = CliBenchMode::Write.into();
+        let both: BenchMode = CliBenchMode::Both.into();
+        assert!(matches!(read, BenchMode::Read));
+        assert!(matches!(write, BenchMode::Write));
+        assert!(matches!(both, BenchMode::Both));
     }
 
     #[test]
-    fn parse_sizes_csv_rejects_zero() {
-        assert!(parse_sizes_csv_trimmed("4096,0").is_err());
-    }
+    fn clap_parses_mode_flag() {
+        use clap::Parser;
 
-    #[test]
-    fn sizes_from_interactive_whitespace_is_none() {
-        assert!(sizes_from_interactive_input("").unwrap().is_none());
-        assert!(sizes_from_interactive_input("   ").unwrap().is_none());
-    }
+        let read = CliArgs::parse_from(["cli-dma-speedtest", "--mode", "read"]);
+        assert!(matches!(read.mode, CliBenchMode::Read));
 
-    #[test]
-    fn sizes_from_interactive_nonempty_is_some() {
-        let v = sizes_from_interactive_input("1024,2048").unwrap().unwrap();
-        assert_eq!(v, vec![1024, 2048]);
+        let write = CliArgs::parse_from(["cli-dma-speedtest", "--mode", "write"]);
+        assert!(matches!(write.mode, CliBenchMode::Write));
+
+        let both = CliArgs::parse_from(["cli-dma-speedtest", "--mode", "both"]);
+        assert!(matches!(both.mode, CliBenchMode::Both));
     }
 }

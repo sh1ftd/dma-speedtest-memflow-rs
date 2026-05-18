@@ -15,6 +15,7 @@ pub fn render_results_table(
             .striped(true)
             .spacing([15.0, 4.0])
             .show(ui, |ui| {
+                ui.label("Op");
                 ui.label("Size");
                 ui.label("Min");
                 ui.label("Avg");
@@ -22,8 +23,9 @@ pub fn render_results_table(
                 ui.end_row();
 
                 let mut sorted_results: Vec<_> = results.iter().collect();
-                sorted_results.sort_by_key(|k| std::cmp::Reverse(k.0));
-                for (read_size, (throughput_points, reads_points, latency_points)) in sorted_results
+                sorted_results.sort_by_key(|k| std::cmp::Reverse(k.1));
+                for (op, read_size, (throughput_points, reads_points, latency_points)) in
+                    sorted_results
                 {
                     let points = match metric {
                         PlotMetric::Throughput => throughput_points,
@@ -37,6 +39,7 @@ pub fn render_results_table(
                         let avg_val =
                             points.iter().map(|&(_, y)| y).sum::<f64>() / points.len() as f64;
 
+                        ui.label(op.label());
                         ui.label(get_size_label(*read_size));
                         match metric {
                             PlotMetric::Reads => {

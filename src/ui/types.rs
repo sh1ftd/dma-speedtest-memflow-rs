@@ -1,5 +1,7 @@
 use std::sync::{Arc, Mutex};
 
+use crate::speedtest::{BenchMode, BenchOp, ProbeTargets};
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlotResizeDirection {
     None,
@@ -22,16 +24,16 @@ pub type DataPoints = Vec<(f64, f64)>;
 /// Type alias for metric data (throughput, reads, latency)
 pub type MetricData = (DataPoints, DataPoints, DataPoints);
 
-/// Type alias for size-based results (size, metrics)
-pub type SizeResults = (usize, MetricData);
+/// Type alias for size-based results (operation, size, metrics)
+pub type SizeResults = (BenchOp, usize, MetricData);
 
 /// Type alias for test results storage
-/// Format: (read_size, (throughput_points, reads_points, latency_points))
 pub type TestResults = Arc<Mutex<Vec<SizeResults>>>;
 
 pub struct ConfigParams<'a> {
     pub connector: &'a mut crate::speedtest::Connector,
     pub pcileech_device: &'a mut String,
+    pub bench_mode: &'a mut BenchMode,
     pub duration: &'a mut u64,
     pub ui_scale: &'a mut f32,
     pub ui_scale_text: &'a mut String,
@@ -39,17 +41,24 @@ pub struct ConfigParams<'a> {
     pub show_error_modal: &'a mut bool,
     pub error_modal_message: &'a mut String,
     pub show_config: &'a mut bool,
+    pub can_start: bool,
+    pub is_connecting: bool,
 }
 
 pub struct TestState<'a> {
     pub is_running: bool,
+    pub is_connecting: bool,
+    pub can_restart: bool,
+    pub bench_mode: BenchMode,
     pub current_throughput: f64,
-    pub current_reads: u64,
+    pub current_ops_per_sec: u64,
     pub current_latency: f64,
+    pub current_bench_op: Option<BenchOp>,
+    pub probe_targets: Option<ProbeTargets>,
     pub current_test_size: Option<usize>,
     pub test_start_time: Option<std::time::Instant>,
     pub test_end_time: Option<f64>,
-    pub completed_chunks: &'a [(usize, f64)],
+    pub completed_chunks: &'a [(BenchOp, usize, f64)],
 }
 
 pub struct PlotControls<'a> {
@@ -62,12 +71,14 @@ pub struct PlotControls<'a> {
 
 pub struct StatsUpdateParams<'a> {
     pub current_throughput: &'a mut f64,
-    pub current_reads: &'a mut u64,
+    pub current_ops_per_sec: &'a mut u64,
     pub current_latency: &'a mut f64,
+    pub current_bench_op: &'a mut Option<BenchOp>,
     pub current_test_size: &'a mut Option<usize>,
     pub test_start_time: &'a mut Option<std::time::Instant>,
     pub max_throughput: &'a mut f64,
-    pub completed_chunks: &'a mut Vec<(usize, f64)>,
+    pub completed_chunks: &'a mut Vec<(BenchOp, usize, f64)>,
+    pub last_console_stats_log: &'a mut Option<std::time::Instant>,
 }
 
 pub struct ResultsPanelParams<'a> {

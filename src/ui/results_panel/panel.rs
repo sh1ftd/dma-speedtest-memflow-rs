@@ -55,7 +55,10 @@ pub fn render_results_panel(
                     ui.add_space(8.0);
                     render_console_and_scale_controls(ui, params, on_toggle_console);
 
-                    if params.test_state.is_running {
+                    if params.test_state.is_connecting {
+                        ui.separator();
+                        ui.label("Connecting to device...");
+                    } else if params.test_state.is_running {
                         ui.separator();
                         render_running_metrics(ui, params);
                         render_chunk_progress(ui, params);
@@ -77,16 +80,26 @@ pub fn render_results_panel(
                             on_stop_test();
                         }
                     } else if params.test_state.test_end_time.is_some() {
+                        let again_label = if params.test_state.can_restart {
+                            format!("{LIGHTNING} TEST AGAIN")
+                        } else {
+                            "PLEASE WAIT...".to_string()
+                        };
                         let again_button = egui::Button::new(
-                            egui::RichText::new(format!("{LIGHTNING} TEST AGAIN"))
-                                .color(egui::Color32::BLACK),
+                            egui::RichText::new(again_label.clone()).color(egui::Color32::BLACK),
                         )
                         .fill(egui::Color32::from_rgb(46, 204, 113))
                         .stroke(egui::Stroke::new(
                             2.0_f32,
                             egui::Color32::from_rgb(39, 174, 96),
                         ));
-                        if ui.add_sized([170.0, 40.0], again_button).clicked() {
+                        let again_clicked = if params.test_state.can_restart {
+                            ui.add_sized([170.0, 40.0], again_button).clicked()
+                        } else {
+                            ui.add_enabled(false, egui::Label::new(&again_label));
+                            false
+                        };
+                        if again_clicked {
                             on_test_again();
                             *params.show_config = false;
                         }
@@ -117,14 +130,14 @@ pub fn render_results_panel(
 
         let specs = [
             (
-                "Throughput (MB/s)",
+                "Throughput (MiB/s)",
                 "throughput_plot",
                 PlotMetric::Throughput,
                 "throughput_results",
-                "Results (MB/s)",
+                "Results (MiB/s)",
             ),
             (
-                "Reads per Second",
+                "Ops per Second",
                 "reads_plot",
                 PlotMetric::Reads,
                 "reads_results",

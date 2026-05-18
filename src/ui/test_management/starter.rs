@@ -1,15 +1,16 @@
 use crate::{
-    speedtest::Connector,
-    speedtest::SpeedTest,
+    speedtest::{BenchMode, BenchOp, BenchPassStartFn, BenchStats, Connector, SpeedTest},
     ui::console::{ConsoleWindow, log_to_console},
     ui::helpers::get_size_label,
 };
-use std::{sync::mpsc::Sender, time::Duration};
+use std::{sync::Arc, sync::mpsc::Sender, time::Duration};
 use tokio::sync::mpsc;
 
 pub fn start_connect(
     connector: Connector,
     pcileech_device: String,
+    bench_mode: BenchMode,
+    max_chunk_bytes: usize,
     console: &ConsoleWindow,
 ) -> std::sync::mpsc::Receiver<Result<SpeedTest, String>> {
     let (tx, rx) = std::sync::mpsc::channel();
@@ -17,7 +18,7 @@ pub fn start_connect(
     log_to_console(console, "Connecting to device...");
 
     std::thread::spawn(move || {
-        let result = SpeedTest::new(connector, pcileech_device)
+        let result = SpeedTest::new(connector, pcileech_device, bench_mode, max_chunk_bytes)
             .map_err(|e| format!("Failed to initialize test: {e}"));
         let _ = tx.send(result);
     });
@@ -32,8 +33,8 @@ pub fn start_test_from_connected(
     test_sizes: &[(usize, bool)],
     console: &ConsoleWindow,
     modal_tx: Sender<String>,
-    stats_tx: mpsc::Sender<(f64, u64, f64, usize, f64)>,
-) {
+    stats_tx: mpsc::Sender<BenchStats>,
+) -> std::sync::mpsc::Receiver<()> {
     let selected_sizes = collect_enabled_sizes(test_sizes);
 
     log_to_console(console, "Starting speed test...");
@@ -45,7 +46,7 @@ pub fn start_test_from_connected(
         test,
         modal_tx,
         stats_tx,
-    );
+    )
 }
 
 fn collect_enabled_sizes(test_sizes: &[(usize, bool)]) -> Vec<usize> {
@@ -61,9 +62,22 @@ fn spawn_test_runner(
     console: ConsoleWindow,
     test: SpeedTest,
     modal_tx: Sender<String>,
-    stats_tx: mpsc::Sender<(f64, u64, f64, usize, f64)>,
-) {
+    stats_tx: mpsc::Sender<BenchStats>,
+) -> std::sync::mpsc::Receiver<()> {
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    let warn_console = console.clone();
+    let on_warn: crate::speedtest::BenchWarnFn = Arc::new(move |msg| {
+        log_to_console(&warn_console, msg);
+    });
+
+    let on_pass_start: BenchPassStartFn = {
+        let console = console.clone();
+        let test = test.clone();
+        Arc::new(move |op, size| log_test_start(&console, &test, op, size))
+    };
+
     std::thread::spawn(move || {
+        let _notify_done = DoneNotify(done_tx);
         let runtime = tokio::runtime::Runtime::new().expect("failed to create runtime");
         runtime.block_on(async move {
             if test_sizes.is_empty() {
@@ -73,10 +87,14 @@ fn spawn_test_runner(
 
             let test_duration = Duration::from_secs(duration);
             for size in test_sizes {
-                log_test_start(&console, size);
-
                 if let Err(e) = test
-                    .run_test_with_size(size, test_duration, stats_tx.clone())
+                    .run_passes_for_size(
+                        size,
+                        test_duration,
+                        stats_tx.clone(),
+                        Some(on_warn.clone()),
+                        Some(on_pass_start.clone()),
+                    )
                     .await
                 {
                     handle_test_error(&console, e, &modal_tx);
@@ -85,13 +103,28 @@ fn spawn_test_runner(
             }
         });
     });
+
+    done_rx
 }
 
-fn log_test_start(console: &ConsoleWindow, size: usize) {
-    log_to_console(
-        console,
-        &format!("Testing with read size: {}", get_size_label(size)),
-    );
+/// Signals the UI when the benchmark thread has fully exited (join equivalent).
+struct DoneNotify(std::sync::mpsc::Sender<()>);
+
+impl Drop for DoneNotify {
+    fn drop(&mut self) {
+        let _ = self.0.send(());
+    }
+}
+
+fn log_test_start(console: &ConsoleWindow, test: &SpeedTest, op: BenchOp, size: usize) {
+    let targets = test.probe_targets();
+    let detail = match op {
+        BenchOp::Read => targets.format_read_pass(size),
+        BenchOp::Write => targets
+            .format_write_pass(size)
+            .unwrap_or_else(|| format!("write chunk {}", get_size_label(size))),
+    };
+    log_to_console(console, &detail);
 }
 
 fn handle_test_error(console: &ConsoleWindow, error: anyhow::Error, modal_tx: &Sender<String>) {

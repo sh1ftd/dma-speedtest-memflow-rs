@@ -2,7 +2,7 @@ use eframe::egui;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
-const MAX_LOG_ENTRIES: usize = 1000000;
+use super::constants::MAX_CONSOLE_LOG_ENTRIES;
 
 #[derive(Clone)]
 pub struct ConsoleWindow {
@@ -19,7 +19,7 @@ impl Default for ConsoleWindow {
 impl ConsoleWindow {
     pub fn new() -> Self {
         Self {
-            logs: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_LOG_ENTRIES))),
+            logs: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_CONSOLE_LOG_ENTRIES))),
             visible: false,
         }
     }
@@ -55,7 +55,7 @@ impl ConsoleWindow {
 
     pub fn log(&self, message: String) {
         if let Ok(mut logs) = self.logs.lock() {
-            if logs.len() >= MAX_LOG_ENTRIES {
+            if logs.len() >= MAX_CONSOLE_LOG_ENTRIES {
                 logs.pop_front();
             }
             logs.push_back(message);

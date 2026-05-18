@@ -47,7 +47,7 @@ fn y_range_for(results: &TestResults, metric: PlotMetric) -> (f64, f64) {
     let mut min_v: Option<f64> = None;
     let mut max_v: Option<f64> = None;
     if let Ok(results) = results.lock() {
-        for (_, (throughput_points, reads_points, latency_points)) in results.iter() {
+        for (_, _, (throughput_points, reads_points, latency_points)) in results.iter() {
             let pts: &Vec<(f64, f64)> = match metric {
                 PlotMetric::Throughput => throughput_points,
                 PlotMetric::Reads => reads_points,
@@ -93,8 +93,9 @@ fn render_plot(
         .show(ui, |plot_ui| {
             if let Ok(results) = results.lock() {
                 let mut sorted_results: Vec<_> = results.iter().collect();
-                sorted_results.sort_by_key(|k| std::cmp::Reverse(k.0));
-                for (read_size, (throughput_points, reads_points, latency_points)) in sorted_results
+                sorted_results.sort_by_key(|k| std::cmp::Reverse(k.1));
+                for (op, read_size, (throughput_points, reads_points, latency_points)) in
+                    sorted_results
                 {
                     let points = match metric {
                         PlotMetric::Throughput => throughput_points,
@@ -105,11 +106,8 @@ fn render_plot(
                         let color = color_for_size(*read_size);
                         let plot_points: PlotPoints<'_> =
                             points.iter().map(|&(x, y)| [x, y]).collect();
-                        plot_ui.line(
-                            Line::new(get_size_label(*read_size), plot_points)
-                                .color(color)
-                                .width(2.0_f32),
-                        );
+                        let legend = format!("{} {}", op.label(), get_size_label(*read_size));
+                        plot_ui.line(Line::new(legend, plot_points).color(color).width(2.0_f32));
                     }
                 }
             }

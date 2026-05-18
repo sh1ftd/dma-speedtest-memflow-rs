@@ -8,9 +8,9 @@ use crate::speedtest::Connector;
 use crate::ui::types::ConfigParams;
 
 use super::{
-    connector_section::render_connector_section, header::render_header,
-    start_button::render_start_button, test_sizes::render_test_size_controls,
-    ui_scale::render_ui_scale_controls,
+    bench_mode::render_bench_mode_controls, connector_section::render_connector_section,
+    header::render_header, start_button::{StartButtonParams, render_start_button},
+    test_sizes::render_test_size_controls, ui_scale::render_ui_scale_controls,
 };
 
 pub fn render_config_panel(
@@ -44,6 +44,7 @@ pub fn render_config_panel(
             ui.add_space(10.0);
 
             render_connector_section(ui, params.connector, params.pcileech_device);
+            render_bench_mode_controls(ui, params.bench_mode);
             render_duration_slider(ui, params.duration);
 
             render_test_size_controls(params.test_sizes, ui);
@@ -52,15 +53,14 @@ pub fn render_config_panel(
             let needs_pcileech_device = *params.connector == Connector::Pcileech
                 && params.pcileech_device.trim().is_empty();
             let any_size_selected = params.test_sizes.iter().any(|(_, enabled)| *enabled);
-            render_start_button(
-                ui,
-                needs_pcileech_device,
-                any_size_selected,
-                on_start_test,
-                params.show_error_modal,
-                params.error_modal_message,
-                params.show_config,
-            );
+            let mut start_button = StartButtonParams {
+                can_start: params.can_start,
+                is_connecting: params.is_connecting,
+                connector_requires_device: needs_pcileech_device,
+                has_selected_size: any_size_selected,
+                show_config: params.show_config,
+            };
+            render_start_button(ui, &mut start_button, on_start_test);
         });
 }
 

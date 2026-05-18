@@ -4,7 +4,7 @@ use egui_phosphor::regular::*;
 #[cfg(feature = "branding")]
 use crate::branding;
 
-use crate::cli::DEFAULT_READ_SIZES;
+use crate::bench_config::DEFAULT_CHUNK_SIZES;
 use crate::ui::helpers::{color_for_size, get_size_label};
 
 pub fn render_test_size_controls(test_sizes: &mut [(usize, bool)], ui: &mut egui::Ui) {
@@ -36,7 +36,7 @@ fn render_bulk_actions(test_sizes: &mut [(usize, bool)], ui: &mut egui::Ui) {
 
         if ui.button("Default").clicked() {
             for (size, enabled) in test_sizes.iter_mut() {
-                *enabled = DEFAULT_READ_SIZES.iter().copied().any(|d| d == *size);
+                *enabled = DEFAULT_CHUNK_SIZES.contains(size);
             }
         }
     });
