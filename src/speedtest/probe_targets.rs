@@ -41,6 +41,13 @@ impl ProbeTargets {
 
     /// Lines logged once at connect (CLI console + GUI console).
     pub fn connect_detail_lines(&self) -> Vec<String> {
+        self.connect_detail_lines_with_verified(None)
+    }
+
+    pub(crate) fn connect_detail_lines_with_verified(
+        &self,
+        write_verified_bytes: Option<usize>,
+    ) -> Vec<String> {
         let mut lines = vec![
             format!("Process: {TARGET_PROCESS}"),
             format!(
@@ -69,9 +76,16 @@ impl ProbeTargets {
                 "  Excluded at selection: all PE modules (+4 KiB past each), read probe page"
                     .to_string(),
             );
-            lines.push(format!(
-                "  Verified at connect: {WRITE_CANARY_BYTES}-byte write-read canary"
-            ));
+            if let Some(verified) = write_verified_bytes {
+                lines.push(format!(
+                    "  Verified at connect: {} write-read canary",
+                    format_byte_count(verified)
+                ));
+            } else {
+                lines.push(format!(
+                    "  Verified at connect: {WRITE_CANARY_BYTES}-byte write-read canary"
+                ));
+            }
         }
 
         lines
@@ -104,5 +118,27 @@ impl ProbeTargets {
             Self::format_va(addr),
             format_byte_count(chunk_bytes),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connect_details_report_actual_verified_write_bytes() {
+        let targets = ProbeTargets::new(
+            Address::from(0x1000_u64),
+            Some(Address::from(0x2000_u64)),
+            Some(128 * 1024),
+        );
+
+        let lines = targets.connect_detail_lines_with_verified(Some(128 * 1024));
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("128 KiB (131072 B) write-read canary"))
+        );
     }
 }

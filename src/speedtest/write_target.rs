@@ -26,6 +26,10 @@ impl VaRange {
         Self { start, end }
     }
 
+    pub fn len(self) -> u64 {
+        self.end.saturating_sub(self.start)
+    }
+
     pub fn overlaps(self, other: Self) -> bool {
         self.start < other.end && other.start < self.end
     }
@@ -37,6 +41,12 @@ impl VaRange {
             .saturating_add(MODULE_END_GUARD_BYTES);
         Self { start, end }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SafeWriteRegion {
+    pub base: Address,
+    pub size: umem,
 }
 
 pub fn collect_module_ranges(process: &mut IntoProcessInstanceArcBox<'_>) -> Result<Vec<VaRange>> {
@@ -51,18 +61,49 @@ fn is_writable_candidate(page_type: PageType) -> bool {
     page_type.contains(PageType::WRITEABLE) && !page_type.contains(PageType::PAGE_TABLE)
 }
 
-fn region_overlaps_excluded(region: VaRange, excluded: &[VaRange]) -> bool {
-    excluded.iter().any(|&ex| region.overlaps(ex))
+fn subtract_range(segment: VaRange, excluded: VaRange) -> Vec<VaRange> {
+    if !segment.overlaps(excluded) {
+        return vec![segment];
+    }
+
+    let mut remaining = Vec::with_capacity(2);
+    if segment.start < excluded.start {
+        remaining.push(VaRange {
+            start: segment.start,
+            end: segment.end.min(excluded.start),
+        });
+    }
+    if excluded.end < segment.end {
+        remaining.push(VaRange {
+            start: segment.start.max(excluded.end),
+            end: segment.end,
+        });
+    }
+    remaining
 }
 
-/// Pick the largest writable VA region that does not overlap excluded ranges.
+fn available_segments(region: VaRange, excluded: &[VaRange]) -> Vec<VaRange> {
+    let mut segments = vec![region];
+    for &excluded_range in excluded {
+        segments = segments
+            .into_iter()
+            .flat_map(|segment| subtract_range(segment, excluded_range))
+            .collect();
+        if segments.is_empty() {
+            break;
+        }
+    }
+    segments
+}
+
+/// Pick the largest writable VA segment after carving out excluded ranges.
 pub fn find_safe_write_region(
     map: &[MemoryRange],
     excluded: &[VaRange],
     min_bytes: usize,
-) -> Option<Address> {
+) -> Option<SafeWriteRegion> {
     let min_bytes = min_bytes as u64;
-    let mut best: Option<(u64, Address)> = None;
+    let mut best: Option<SafeWriteRegion> = None;
 
     for range in map {
         let base = range.0;
@@ -76,17 +117,24 @@ pub fn find_safe_write_region(
             continue;
         }
         let region = VaRange::from_start_size(base, size);
-        if region_overlaps_excluded(region, excluded) {
-            continue;
-        }
-        match best {
-            None => best = Some((size_u, base)),
-            Some((best_size, _)) if size_u > best_size => best = Some((size_u, base)),
-            _ => {}
+        for segment in available_segments(region, excluded) {
+            let segment_size = segment.len();
+            if segment_size < min_bytes {
+                continue;
+            }
+            let candidate = SafeWriteRegion {
+                base: Address::from(segment.start),
+                size: segment_size as umem,
+            };
+            match best {
+                None => best = Some(candidate),
+                Some(best_region) if segment_size > best_region.size => best = Some(candidate),
+                _ => {}
+            }
         }
     }
 
-    best.map(|(_, addr)| addr)
+    best
 }
 
 fn fill_verify_pattern(buf: &mut [u8]) {
@@ -135,7 +183,7 @@ pub fn resolve_safe_write_target(
     process: &mut IntoProcessInstanceArcBox<'_>,
     read_addr: Address,
     min_bytes: usize,
-) -> Result<(Address, umem)> {
+) -> Result<(Address, umem, usize)> {
     let min_bytes = min_bytes.max(MIN_WRITE_REGION_BYTES);
 
     let modules = collect_module_ranges(process)?;
@@ -146,22 +194,18 @@ pub fn resolve_safe_write_target(
     ));
 
     let map = process.mapped_mem_range_vec(0, Address::null(), Address::invalid());
-    let write_addr = find_safe_write_region(&map, &excluded, min_bytes).ok_or_else(|| {
+    let region = find_safe_write_region(&map, &excluded, min_bytes).ok_or_else(|| {
         anyhow::anyhow!(
             "no safe writable region found (need at least {min_bytes} bytes outside loaded modules and the read probe page)"
         )
     })?;
 
-    let region_size = map
-        .iter()
-        .find(|range| range.0 == write_addr)
-        .map(|range| range.1)
-        .unwrap_or(min_bytes as umem);
+    let verify_bytes = usize::try_from(region.size)
+        .unwrap_or(usize::MAX)
+        .min(min_bytes);
+    verify_write_target(process, region.base, verify_bytes)?;
 
-    let verify_bytes = (region_size as usize).min(min_bytes);
-    verify_write_target(process, write_addr, verify_bytes)?;
-
-    Ok((write_addr, region_size))
+    Ok((region.base, region.size, verify_bytes))
 }
 
 #[cfg(test)]
@@ -215,10 +259,11 @@ mod tests {
         ];
         let excluded = vec![VaRange {
             start: 0x10000,
-            end: 0x10008,
+            end: 0x20000,
         }];
-        let addr = find_safe_write_region(&map, &excluded, 32 * 1024).unwrap();
-        assert_eq!(addr, Address::from(0x30000_u64));
+        let region = find_safe_write_region(&map, &excluded, 32 * 1024).unwrap();
+        assert_eq!(region.base, Address::from(0x30000_u64));
+        assert_eq!(region.size, 48 * 1024);
     }
 
     #[test]
@@ -241,7 +286,10 @@ mod tests {
         assert!(find_safe_write_region(&map, &[], 32 * 1024).is_none());
         assert_eq!(
             find_safe_write_region(&map, &[], 16 * 1024),
-            Some(Address::from(0x2000_u64))
+            Some(SafeWriteRegion {
+                base: Address::from(0x2000_u64),
+                size: 16 * 1024
+            })
         );
     }
 
@@ -256,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn excluded_range_blocks_overlapping_candidate() {
+    fn excluded_range_blocks_candidate_when_remainder_is_too_small() {
         let map = vec![CTup3(
             Address::from(0x4000_u64),
             64 * 1024,
@@ -266,7 +314,23 @@ mod tests {
             start: 0x4000,
             end: 0x5000,
         }];
-        assert!(find_safe_write_region(&map, &excluded, 4096).is_none());
+        assert!(find_safe_write_region(&map, &excluded, 64 * 1024).is_none());
+    }
+
+    #[test]
+    fn partial_excluded_range_is_carved_from_candidate() {
+        let map = vec![CTup3(
+            Address::from(0x4000_u64),
+            64 * 1024,
+            PageType::WRITEABLE,
+        )];
+        let excluded = vec![VaRange {
+            start: 0x4000,
+            end: 0x5000,
+        }];
+        let region = find_safe_write_region(&map, &excluded, 4096).unwrap();
+        assert_eq!(region.base, Address::from(0x5000_u64));
+        assert_eq!(region.size, 64 * 1024 - 0x1000);
     }
 
     #[test]

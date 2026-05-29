@@ -13,6 +13,7 @@ impl SpeedTestApp {
         self.error_message = None;
         self.show_error_modal = false;
         self.error_modal_message.clear();
+        self.connection_cancelled = false;
         self.results.lock().unwrap().clear();
         self.probe_targets = None;
         self.current_throughput = 0.0;
@@ -51,6 +52,11 @@ impl SpeedTestApp {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.connect_rx = None;
                 self.is_connecting = false;
+                if self.connection_cancelled {
+                    self.connection_cancelled = false;
+                    self.show_config = true;
+                    return;
+                }
                 let msg = "Connection thread terminated unexpectedly".to_string();
                 log_to_console(&self.console, &msg);
                 self.show_error_modal = true;
@@ -63,11 +69,17 @@ impl SpeedTestApp {
         self.connect_rx = None;
         self.is_connecting = false;
 
+        if self.connection_cancelled {
+            self.connection_cancelled = false;
+            self.show_config = true;
+            return;
+        }
+
         match result {
             Ok(test) => {
                 let targets = test.probe_targets();
                 self.probe_targets = Some(targets);
-                for line in targets.connect_detail_lines() {
+                for line in test.probe_connect_detail_lines() {
                     log_to_console(&self.console, &line);
                 }
 
@@ -102,6 +114,11 @@ impl SpeedTestApp {
     }
 
     pub fn stop_test_impl(&mut self) {
+        if self.is_connecting {
+            self.cancel_connection_impl();
+            return;
+        }
+
         if let Some(test) = &self.test {
             test.request_cancel();
         }
@@ -135,6 +152,18 @@ impl SpeedTestApp {
         self.current_bench_op = None;
         self.modal_rx = None;
         log_to_console(&self.console, "Test stopped");
+    }
+
+    fn cancel_connection_impl(&mut self) {
+        self.connection_cancelled = true;
+        self.is_connecting = false;
+        self.show_config = true;
+        self.show_error_modal = false;
+        self.error_modal_message.clear();
+        log_to_console(
+            &self.console,
+            "Connection cancelled; waiting for connector cleanup before another start.",
+        );
     }
 
     pub fn poll_bench_thread_finished(&mut self) {

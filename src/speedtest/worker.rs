@@ -28,6 +28,7 @@ pub struct SpeedTest {
     read_addr: Address,
     write_addr: Option<Address>,
     write_region_bytes: Option<umem>,
+    write_verified_bytes: Option<usize>,
     mode: BenchMode,
     cancel: Arc<AtomicBool>,
 }
@@ -44,6 +45,7 @@ impl SpeedTest {
             read_addr,
             write_addr,
             write_region_bytes,
+            write_verified_bytes,
         } = initialization::initialize_speedtest(
             connector,
             pcileech_device,
@@ -55,6 +57,7 @@ impl SpeedTest {
             read_addr,
             write_addr,
             write_region_bytes,
+            write_verified_bytes,
             mode,
             cancel: Arc::new(AtomicBool::new(false)),
         })
@@ -62,6 +65,10 @@ impl SpeedTest {
 
     pub fn request_cancel(&self) {
         self.cancel.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.cancel.load(Ordering::Relaxed)
     }
 
     pub fn bench_mode(&self) -> BenchMode {
@@ -78,6 +85,9 @@ impl SpeedTest {
         on_pass_start: Option<BenchPassStartFn>,
     ) -> Result<()> {
         for &op in self.mode.ops_for_size() {
+            if self.is_cancelled() {
+                break;
+            }
             if let Some(ref hook) = on_pass_start {
                 hook(op, size);
             }
@@ -102,6 +112,11 @@ impl SpeedTest {
         ProbeTargets::new(self.read_addr, self.write_addr, self.write_region_bytes)
     }
 
+    pub fn probe_connect_detail_lines(&self) -> Vec<String> {
+        self.probe_targets()
+            .connect_detail_lines_with_verified(self.write_verified_bytes)
+    }
+
     pub async fn run_test_with_size(
         &self,
         op: BenchOp,
@@ -110,37 +125,8 @@ impl SpeedTest {
         stats_tx: mpsc::Sender<BenchStats>,
         on_warn: Option<BenchWarnFn>,
     ) -> Result<()> {
-        if !self.mode.ops_for_size().contains(&op) {
-            anyhow::bail!(
-                "benchmark op {:?} is not enabled for session mode {:?}",
-                op,
-                self.mode
-            );
-        }
-
-        let addr = match op {
-            BenchOp::Read => self.read_addr,
-            BenchOp::Write => self.write_addr.ok_or_else(|| {
-                anyhow::anyhow!("write benchmark requested but no safe write target was resolved")
-            })?,
-        };
-
-        if matches!(op, BenchOp::Write)
-            && let Some(region_bytes) = self.write_region_bytes
-            && size > region_bytes as usize
-        {
-            anyhow::bail!(
-                "write chunk size {size} B exceeds safe write region ({} B); reduce enabled sizes or reconnect",
-                region_bytes
-            );
-        }
-
-        let mut buffer = vec![0u8; size];
-        if matches!(op, BenchOp::Write) {
-            for (i, b) in buffer.iter_mut().enumerate() {
-                *b = (i % 251) as u8;
-            }
-        }
+        let addr = self.operation_address(op, size)?;
+        let mut buffer = prepare_buffer(op, size);
 
         let start_time = std::time::Instant::now();
         let mut ops_this_interval = 0u64;
@@ -153,7 +139,7 @@ impl SpeedTest {
             .unwrap_or_else(std::time::Instant::now);
         let update_interval = Duration::from_millis(100);
 
-        while start_time.elapsed() < duration && !self.cancel.load(Ordering::Relaxed) {
+        while start_time.elapsed() < duration && !self.is_cancelled() {
             let op_start = std::time::Instant::now();
             let attempt = {
                 let mut process = self.process.write();
@@ -246,6 +232,47 @@ impl SpeedTest {
 
         Ok(())
     }
+}
+
+impl SpeedTest {
+    fn operation_address(&self, op: BenchOp, size: usize) -> Result<Address> {
+        if !self.mode.ops_for_size().contains(&op) {
+            anyhow::bail!(
+                "benchmark op {:?} is not enabled for session mode {:?}",
+                op,
+                self.mode
+            );
+        }
+
+        let addr = match op {
+            BenchOp::Read => self.read_addr,
+            BenchOp::Write => self.write_addr.ok_or_else(|| {
+                anyhow::anyhow!("write benchmark requested but no safe write target was resolved")
+            })?,
+        };
+
+        if matches!(op, BenchOp::Write)
+            && let Some(region_bytes) = self.write_region_bytes
+            && size > region_bytes as usize
+        {
+            anyhow::bail!(
+                "write chunk size {size} B exceeds safe write region ({} B); reduce enabled sizes or reconnect",
+                region_bytes
+            );
+        }
+
+        Ok(addr)
+    }
+}
+
+fn prepare_buffer(op: BenchOp, size: usize) -> Vec<u8> {
+    let mut buffer = vec![0u8; size];
+    if matches!(op, BenchOp::Write) {
+        for (i, b) in buffer.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+    }
+    buffer
 }
 
 struct IntervalStatsUpdate {

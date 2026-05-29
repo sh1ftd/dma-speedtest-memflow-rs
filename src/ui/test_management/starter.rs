@@ -87,6 +87,9 @@ fn spawn_test_runner(
 
             let test_duration = Duration::from_secs(duration);
             for size in test_sizes {
+                if test.is_cancelled() {
+                    break;
+                }
                 if let Err(e) = test
                     .run_passes_for_size(
                         size,

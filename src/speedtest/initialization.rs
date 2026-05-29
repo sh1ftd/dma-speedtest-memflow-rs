@@ -10,6 +10,7 @@ pub struct SpeedTestInit {
     pub read_addr: Address,
     pub write_addr: Option<Address>,
     pub write_region_bytes: Option<umem>,
+    pub write_verified_bytes: Option<usize>,
 }
 
 pub(super) fn initialize_speedtest(
@@ -24,12 +25,12 @@ pub(super) fn initialize_speedtest(
 
     let min_write_bytes = MIN_WRITE_REGION_BYTES.max(max_chunk_bytes);
 
-    let (write_addr, write_region_bytes) = if mode.needs_write_target() {
-        let (addr, region) =
+    let (write_addr, write_region_bytes, write_verified_bytes) = if mode.needs_write_target() {
+        let (addr, region, verified) =
             write_target::resolve_safe_write_target(&mut process, read_addr, min_write_bytes)?;
-        (Some(addr), Some(region))
+        (Some(addr), Some(region), Some(verified))
     } else {
-        (None, None)
+        (None, None, None)
     };
 
     Ok(SpeedTestInit {
@@ -37,6 +38,7 @@ pub(super) fn initialize_speedtest(
         read_addr,
         write_addr,
         write_region_bytes,
+        write_verified_bytes,
     })
 }
 

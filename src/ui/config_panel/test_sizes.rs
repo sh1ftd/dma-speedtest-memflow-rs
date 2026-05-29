@@ -9,7 +9,7 @@ use crate::ui::helpers::{color_for_size, get_size_label};
 
 pub fn render_test_size_controls(test_sizes: &mut [(usize, bool)], ui: &mut egui::Ui) {
     ui.label(format!("{CHART_BAR} Test Sizes"));
-    ui.label("Select which read sizes to test:");
+    ui.label("Select which chunk sizes to test:");
 
     render_bulk_actions(test_sizes, ui);
     ui.add_space(8.0);

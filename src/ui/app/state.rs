@@ -25,6 +25,7 @@ pub struct SpeedTestApp {
     pub is_running: bool,
     pub is_connecting: bool,
     pub connect_rx: Option<std::sync::mpsc::Receiver<Result<SpeedTest, String>>>,
+    pub connection_cancelled: bool,
     pub was_running: bool,
     pub error_message: Option<String>,
     pub current_throughput: f64,
@@ -73,8 +74,12 @@ impl SpeedTestApp {
         self.bench_done_rx.is_some()
     }
 
+    pub fn connection_thread_active(&self) -> bool {
+        self.connect_rx.is_some()
+    }
+
     pub fn can_start_test(&self) -> bool {
-        !self.is_connecting && !self.bench_thread_active()
+        !self.is_connecting && !self.connection_thread_active() && !self.bench_thread_active()
     }
 
     pub fn new() -> Self {
@@ -89,6 +94,7 @@ impl SpeedTestApp {
             is_running: false,
             is_connecting: false,
             connect_rx: None,
+            connection_cancelled: false,
             was_running: false,
             error_message: None,
             current_throughput: 0.0,

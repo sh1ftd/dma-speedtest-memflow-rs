@@ -66,10 +66,14 @@ pub fn render_results_panel(
                 });
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    if params.test_state.is_running {
+                    if params.test_state.is_running || params.test_state.is_connecting {
+                        let stop_label = if params.test_state.is_connecting {
+                            format!("{X_CIRCLE} CANCEL")
+                        } else {
+                            format!("{X_CIRCLE} STOP TEST")
+                        };
                         let stop_button = egui::Button::new(
-                            egui::RichText::new(format!("{X_CIRCLE} STOP TEST"))
-                                .color(egui::Color32::BLACK),
+                            egui::RichText::new(stop_label).color(egui::Color32::BLACK),
                         )
                         .fill(egui::Color32::from_rgb(231, 76, 60))
                         .stroke(egui::Stroke::new(
@@ -141,7 +145,7 @@ pub fn render_results_panel(
                 "reads_plot",
                 PlotMetric::Reads,
                 "reads_results",
-                "Results (reads/s)",
+                "Results (ops/s)",
             ),
             (
                 "Latency (μs)",

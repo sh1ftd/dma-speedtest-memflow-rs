@@ -8,9 +8,12 @@ use crate::speedtest::Connector;
 use crate::ui::types::ConfigParams;
 
 use super::{
-    bench_mode::render_bench_mode_controls, connector_section::render_connector_section,
-    header::render_header, start_button::{StartButtonParams, render_start_button},
-    test_sizes::render_test_size_controls, ui_scale::render_ui_scale_controls,
+    bench_mode::render_bench_mode_controls,
+    connector_section::render_connector_section,
+    header::render_header,
+    start_button::{StartButtonParams, render_start_button},
+    test_sizes::render_test_size_controls,
+    ui_scale::render_ui_scale_controls,
 };
 
 pub fn render_config_panel(

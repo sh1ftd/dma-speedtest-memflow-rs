@@ -80,9 +80,7 @@ pub fn parse_chunk_sizes_csv(input: &str) -> Result<Vec<usize>> {
         }
         out.push(n);
     }
-    if out.is_empty() {
-        bail!("no valid sizes in {:?}", input);
-    }
+    validate_chunk_sizes(&out)?;
     Ok(out)
 }
 
@@ -92,6 +90,16 @@ pub fn chunk_sizes_from_optional_csv(s: &str) -> Result<Option<Vec<usize>>> {
         return Ok(None);
     }
     Ok(Some(parse_chunk_sizes_csv(trimmed)?))
+}
+
+pub fn validate_chunk_sizes(sizes: &[usize]) -> Result<()> {
+    if sizes.is_empty() {
+        bail!("chunk sizes must contain at least one value");
+    }
+    if sizes.contains(&0) {
+        bail!("chunk sizes must be positive; got 0");
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -131,5 +139,10 @@ mod tests {
     #[test]
     fn parse_chunk_sizes_csv_rejects_zero() {
         assert!(parse_chunk_sizes_csv("4096,0").is_err());
+    }
+
+    #[test]
+    fn validate_chunk_sizes_rejects_direct_zero_values() {
+        assert!(validate_chunk_sizes(&[4096, 0]).is_err());
     }
 }

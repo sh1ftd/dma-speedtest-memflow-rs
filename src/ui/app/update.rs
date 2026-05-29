@@ -238,7 +238,11 @@ impl eframe::App for SpeedTestApp {
 
         self.poll_bench_thread_finished();
 
-        if self.is_running || self.is_connecting || self.bench_thread_active() {
+        if self.is_running
+            || self.is_connecting
+            || self.connection_thread_active()
+            || self.bench_thread_active()
+        {
             ctx.request_repaint();
         }
     }
