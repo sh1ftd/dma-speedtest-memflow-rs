@@ -2,29 +2,27 @@
 
 Windows GUI for benchmarking DMA read performance through the [memflow](https://github.com/memflow/memflow) framework. Targets `explorer.exe`/`ntdll.dll` and reports throughput, read rate, and latency in real time.
 
-
 ## Metrics
 
 Per chunk size and operation:
 
-| Metric | Unit |
-|--------|------|
-| Throughput | MiB/s |
+| Metric         | Unit  |
+| -------------- | ----- |
+| Throughput     | MiB/s |
 | Operation rate | ops/s |
-| Latency (mean) | µs |
-
+| Latency (mean) | µs    |
 
 ## CLI
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--connector` | `pcileech` | `pcileech` or `native` |
-| `--device` | `FPGA` | PCILeech device string |
-| `--duration` | `10` | Seconds per chunk size (1–60) |
-| `--mode` | `read` | `read`, `write`, or `both` |
-| `--sizes` | 4096, 8192, 16384, 32768 | Chunk sizes in bytes (comma-separated) |
-| `-h`, `--help` | — | Usage and options |
-| `-V`, `--version` | — | Package version |
+| Flag              | Default                  | Description                            |
+| ----------------- | ------------------------ | -------------------------------------- |
+| `--connector`     | `pcileech`               | `pcileech` or `native`                 |
+| `--device`        | `FPGA`                   | PCILeech device string                 |
+| `--duration`      | `10`                     | Seconds per chunk size (1–60)          |
+| `--mode`          | `read`                   | `read`, `write`, or `both`             |
+| `--sizes`         | 4096, 8192, 16384, 32768 | Chunk sizes in bytes (comma-separated) |
+| `-h`, `--help`    | —                        | Usage and options                      |
+| `-V`, `--version` | —                        | Package version                        |
 
 ## Requirements
 
