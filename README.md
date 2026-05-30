@@ -35,5 +35,3 @@ Per chunk size and operation:
 ## Credits
 
 Built with [Rust](https://www.rust-lang.org/), [memflow](https://github.com/memflow/memflow), [tokio](https://github.com/tokio-rs/tokio) and [egui](https://github.com/emilk/).
-
-License: **AGPL-3.0** (see `Cargo.toml`).
