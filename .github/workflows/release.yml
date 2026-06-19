@@ -23,6 +23,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly
+          components: rustfmt, clippy
 
       - id: ver
         run: |
@@ -30,7 +31,17 @@ jobs:
           if ($c -notmatch 'version\s*=\s*"([^"]+)"') { exit 1 }
           "version=$($Matches[1])" >> $env:GITHUB_OUTPUT
 
-      - run: cargo build --release
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      # Do not use --all-features here: branding assets are private/local only.
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test --locked
+
+      - run: cargo build --release --locked
 
       # Zips named like the exe basename: …-vVERSION.zip; contents = that exe + DLL_DEP files at root.
       - run: |

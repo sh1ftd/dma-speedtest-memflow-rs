@@ -216,6 +216,7 @@ impl eframe::App for SpeedTestApp {
                     max_throughput: &mut self.max_throughput,
                     completed_chunks: &mut self.completed_chunks,
                     last_console_stats_log: &mut self.last_console_stats_log,
+                    pass_aggregators: &mut self.pass_aggregators,
                 };
 
                 let stats_closed =
@@ -305,6 +306,8 @@ impl eframe::App for SpeedTestApp {
                 let mut should_stop_test = false;
                 let mut should_start_test = false;
                 let mut should_toggle_console = false;
+                let mut should_export_csv = false;
+                let mut should_export_json = false;
 
                 let can_restart = self.can_start_test();
                 let plot_controls = PlotControls {
@@ -329,6 +332,7 @@ impl eframe::App for SpeedTestApp {
                     test_start_time: self.test_start_time,
                     test_end_time: self.test_end_time,
                     completed_chunks: &self.completed_chunks,
+                    report_export_status: self.report_export_status.as_ref(),
                 };
 
                 let mut results_params = ResultsPanelParams {
@@ -349,6 +353,8 @@ impl eframe::App for SpeedTestApp {
                     || should_stop_test = true,
                     || should_start_test = true,
                     &mut should_toggle_console,
+                    &mut should_export_csv,
+                    &mut should_export_json,
                 );
 
                 if should_stop_test {
@@ -359,6 +365,18 @@ impl eframe::App for SpeedTestApp {
                 }
                 if should_toggle_console {
                     self.console.toggle();
+                }
+                let mut report_exported = false;
+                if should_export_csv {
+                    self.export_report_impl(crate::speedtest::ReportFormat::Csv);
+                    report_exported = true;
+                }
+                if should_export_json {
+                    self.export_report_impl(crate::speedtest::ReportFormat::Json);
+                    report_exported = true;
+                }
+                if report_exported {
+                    ctx.request_repaint();
                 }
             });
         }

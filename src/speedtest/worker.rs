@@ -3,6 +3,7 @@ use super::connector::Connector;
 use super::initialization::SpeedTestInit;
 use super::mem_io::{self, IoAttempt, MAX_IO_RETRIES};
 use super::probe_targets::ProbeTargets;
+use super::write_target;
 use anyhow::Result;
 use memflow::prelude::v1::*;
 use std::{
@@ -29,6 +30,7 @@ pub struct SpeedTest {
     write_addr: Option<Address>,
     write_region_bytes: Option<umem>,
     write_verified_bytes: Option<usize>,
+    write_restore_bytes: Option<Arc<[u8]>>,
     mode: BenchMode,
     cancel: Arc<AtomicBool>,
 }
@@ -46,6 +48,7 @@ impl SpeedTest {
             write_addr,
             write_region_bytes,
             write_verified_bytes,
+            write_restore_bytes,
         } = initialization::initialize_speedtest(
             connector,
             pcileech_device,
@@ -58,6 +61,7 @@ impl SpeedTest {
             write_addr,
             write_region_bytes,
             write_verified_bytes,
+            write_restore_bytes: write_restore_bytes.map(Arc::from),
             mode,
             cancel: Arc::new(AtomicBool::new(false)),
         })
@@ -115,6 +119,16 @@ impl SpeedTest {
     pub fn probe_connect_detail_lines(&self) -> Vec<String> {
         self.probe_targets()
             .connect_detail_lines_with_verified(self.write_verified_bytes)
+    }
+
+    pub fn restore_write_target(&self) -> Result<()> {
+        let (Some(addr), Some(original)) = (self.write_addr, self.write_restore_bytes.as_deref())
+        else {
+            return Ok(());
+        };
+
+        let mut process = self.process.write();
+        write_target::restore_write_target(&mut process, addr, original)
     }
 
     pub async fn run_test_with_size(
@@ -247,7 +261,9 @@ impl SpeedTest {
         let addr = match op {
             BenchOp::Read => self.read_addr,
             BenchOp::Write => self.write_addr.ok_or_else(|| {
-                anyhow::anyhow!("write benchmark requested but no safe write target was resolved")
+                anyhow::anyhow!(
+                    "write benchmark requested but no writable probe target was resolved"
+                )
             })?,
         };
 
@@ -256,7 +272,7 @@ impl SpeedTest {
             && size > region_bytes as usize
         {
             anyhow::bail!(
-                "write chunk size {size} B exceeds safe write region ({} B); reduce enabled sizes or reconnect",
+                "write chunk size {size} B exceeds writable probe region ({} B); reduce enabled sizes or reconnect",
                 region_bytes
             );
         }
@@ -307,14 +323,16 @@ async fn send_interval_stats(
     let elapsed_secs = update.start_time.elapsed().as_secs_f64();
 
     stats_tx
-        .send((
-            update.op,
-            throughput_mib_s,
-            ops_per_sec_f64.round() as u64,
+        .send(BenchStats {
+            op: update.op,
+            chunk_bytes: update.size,
             elapsed_secs,
-            update.size,
-            avg_latency_us,
-        ))
+            interval_secs: update.interval_secs,
+            ops: update.ops_this_interval,
+            throughput_mib_s,
+            ops_per_sec: ops_per_sec_f64.round() as u64,
+            latency_us: avg_latency_us,
+        })
         .await
         .is_err()
 }

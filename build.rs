@@ -15,7 +15,14 @@ fn main() {
     #[cfg(feature = "branding")]
     check_branding_files();
 
-    configure_linker();
+    if is_windows_msvc_target() {
+        configure_linker();
+    }
+}
+
+fn is_windows_msvc_target() -> bool {
+    std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
 }
 
 /// Configure linker settings for Windows builds

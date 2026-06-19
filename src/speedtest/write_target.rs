@@ -49,6 +49,13 @@ pub struct SafeWriteRegion {
     pub size: umem,
 }
 
+pub struct ResolvedWriteTarget {
+    pub base: Address,
+    pub region_bytes: umem,
+    pub verified_bytes: usize,
+    pub restore_bytes: Vec<u8>,
+}
+
 pub fn collect_module_ranges(process: &mut IntoProcessInstanceArcBox<'_>) -> Result<Vec<VaRange>> {
     let modules = process.module_list()?;
     Ok(modules
@@ -178,12 +185,50 @@ pub fn verify_write_target(
     Ok(())
 }
 
+pub fn capture_write_restore_bytes(
+    process: &mut IntoProcessInstanceArcBox<'_>,
+    write_addr: Address,
+    restore_bytes: usize,
+) -> Result<Vec<u8>> {
+    if restore_bytes == 0 {
+        bail!("write restore capture requires a non-zero byte count");
+    }
+
+    let mut original = vec![0u8; restore_bytes];
+    if mem_io::read_raw_into_with_retry(process, write_addr, &mut original) != IoAttempt::Ok {
+        bail!(
+            "read original write probe bytes ({restore_bytes} B) failed after {MAX_IO_RETRIES} retries; refusing write benchmark without restore data"
+        );
+    }
+
+    Ok(original)
+}
+
+pub fn restore_write_target(
+    process: &mut IntoProcessInstanceArcBox<'_>,
+    write_addr: Address,
+    original: &[u8],
+) -> Result<()> {
+    if original.is_empty() {
+        return Ok(());
+    }
+
+    if mem_io::write_raw_with_retry(process, write_addr, original) != IoAttempt::Ok {
+        bail!(
+            "restore of original write probe bytes ({} B) failed after {MAX_IO_RETRIES} retries",
+            original.len()
+        );
+    }
+
+    Ok(())
+}
+
 /// Resolve a safe write base address inside `process` (same target as reads).
 pub fn resolve_safe_write_target(
     process: &mut IntoProcessInstanceArcBox<'_>,
     read_addr: Address,
     min_bytes: usize,
-) -> Result<(Address, umem, usize)> {
+) -> Result<ResolvedWriteTarget> {
     let min_bytes = min_bytes.max(MIN_WRITE_REGION_BYTES);
 
     let modules = collect_module_ranges(process)?;
@@ -196,16 +241,35 @@ pub fn resolve_safe_write_target(
     let map = process.mapped_mem_range_vec(0, Address::null(), Address::invalid());
     let region = find_safe_write_region(&map, &excluded, min_bytes).ok_or_else(|| {
         anyhow::anyhow!(
-            "no safe writable region found (need at least {min_bytes} bytes outside loaded modules and the read probe page)"
+            "no auto-selected writable probe region found (need at least {min_bytes} bytes outside loaded modules and the read probe page)"
         )
     })?;
 
     let verify_bytes = usize::try_from(region.size)
         .unwrap_or(usize::MAX)
         .min(min_bytes);
-    verify_write_target(process, region.base, verify_bytes)?;
+    let restore_bytes = capture_write_restore_bytes(process, region.base, verify_bytes)?;
 
-    Ok((region.base, region.size, verify_bytes))
+    let verify_result = verify_write_target(process, region.base, verify_bytes);
+    let restore_result = restore_write_target(process, region.base, &restore_bytes);
+
+    match (verify_result, restore_result) {
+        (Ok(()), Ok(())) => {}
+        (Err(verify_err), Ok(())) => return Err(verify_err),
+        (Ok(()), Err(restore_err)) => return Err(restore_err),
+        (Err(verify_err), Err(restore_err)) => {
+            bail!(
+                "{verify_err}; additionally failed to restore original write probe bytes: {restore_err}"
+            );
+        }
+    }
+
+    Ok(ResolvedWriteTarget {
+        base: region.base,
+        region_bytes: region.size,
+        verified_bytes: verify_bytes,
+        restore_bytes,
+    })
 }
 
 #[cfg(test)]

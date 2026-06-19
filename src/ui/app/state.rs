@@ -3,13 +3,13 @@ use std::time::Instant;
 
 use tokio::sync::mpsc;
 
-use crate::speedtest::{BenchMode, BenchStats, Connector, ProbeTargets, SpeedTest};
+use crate::speedtest::{BenchMode, BenchStats, Connector, PassAggregator, ProbeTargets, SpeedTest};
 use crate::ui::console::ConsoleWindow;
 
 use super::super::constants::DEFAULT_PLOT_HEIGHT;
 use super::super::constants::DEFAULT_PLOT_WIDTH;
-use super::super::types::PlotResizeDirection;
 use super::super::types::TestResults;
+use super::super::types::{PlotResizeDirection, ReportExportStatus};
 
 #[cfg(feature = "branding")]
 use crate::branding::BrandingManager;
@@ -41,6 +41,7 @@ pub struct SpeedTestApp {
     pub test_end_time: Option<f64>,
     pub current_test_size: Option<usize>,
     pub completed_chunks: Vec<(crate::speedtest::BenchOp, usize, f64)>,
+    pub pass_aggregators: Vec<PassAggregator>,
     pub max_throughput: f64,
     pub console: ConsoleWindow,
     pub ui_scale: f32,
@@ -59,6 +60,7 @@ pub struct SpeedTestApp {
     pub plot_resize_last_repeat: Option<std::time::Instant>,
     pub center_window_frames: u8,
     pub last_console_stats_log: Option<std::time::Instant>,
+    pub report_export_status: Option<ReportExportStatus>,
     #[cfg(feature = "branding")]
     pub branding_manager: BrandingManager,
 }
@@ -109,6 +111,7 @@ impl SpeedTestApp {
             test_end_time: None,
             current_test_size: None,
             completed_chunks: Vec::new(),
+            pass_aggregators: Vec::new(),
             max_throughput: 0.0,
             console: ConsoleWindow::new(),
             ui_scale: 1.0,
@@ -125,6 +128,7 @@ impl SpeedTestApp {
             plot_resize_last_repeat: None,
             center_window_frames: 0,
             last_console_stats_log: None,
+            report_export_status: None,
             test_sizes: crate::bench_config::default_gui_chunk_sizes(),
             #[cfg(feature = "branding")]
             branding_manager: BrandingManager::new(),

@@ -2,7 +2,7 @@
 pub const CONFIG_WINDOW_MIN_WIDTH: f32 = 650.0;
 pub const CONFIG_WINDOW_MAX_WIDTH: f32 = 9999.0;
 
-pub const CONFIG_WINDOW_MIN_HEIGHT: f32 = 680.0;
+pub const CONFIG_WINDOW_MIN_HEIGHT: f32 = 760.0;
 pub const CONFIG_WINDOW_MAX_HEIGHT: f32 = 9999.0;
 
 // Error window cfg

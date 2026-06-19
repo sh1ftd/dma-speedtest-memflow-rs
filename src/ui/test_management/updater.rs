@@ -1,4 +1,4 @@
-use crate::speedtest::{BenchOp, BenchSample, BenchStats, format_console_log_line};
+use crate::speedtest::{BenchOp, BenchSample, BenchStats, PassAggregator, format_console_log_line};
 use crate::ui::console::{self, ConsoleWindow};
 use crate::ui::constants::CONSOLE_STATS_LOG_INTERVAL_SECS;
 use crate::ui::types::{StatsUpdateParams, TestResults};
@@ -39,7 +39,7 @@ enum StatsUpdate {
 
 fn try_recv(stats_rx: &mut mpsc::Receiver<BenchStats>) -> Option<StatsUpdate> {
     match stats_rx.try_recv() {
-        Ok(tuple) => Some(StatsUpdate::Data(BenchSample::from_tuple(tuple))),
+        Ok(stats) => Some(StatsUpdate::Data(BenchSample::from_stats(stats))),
         Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Some(StatsUpdate::Pending),
         Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => Some(StatsUpdate::Closed),
     }
@@ -73,6 +73,7 @@ fn apply_sample(
         *params.last_console_stats_log = Some(Instant::now());
     }
 
+    record_pass_summary_sample(params.pass_aggregators, &sample);
     append_plot_point(results, params, &sample);
 }
 
@@ -149,6 +150,20 @@ fn append_plot_point(results: &TestResults, params: &StatsUpdateParams<'_>, samp
             entry.2.2.push((elapsed_secs, sample.latency_us));
         }
     }
+}
+
+fn record_pass_summary_sample(aggregators: &mut Vec<PassAggregator>, sample: &BenchSample) {
+    if let Some(aggregator) = aggregators
+        .iter_mut()
+        .find(|agg| agg.is_for(sample.op, sample.chunk_bytes))
+    {
+        aggregator.push(sample);
+        return;
+    }
+
+    let mut aggregator = PassAggregator::new(sample.op, sample.chunk_bytes);
+    aggregator.push(sample);
+    aggregators.push(aggregator);
 }
 
 fn finalize_current_chunk(params: &mut StatsUpdateParams<'_>) {

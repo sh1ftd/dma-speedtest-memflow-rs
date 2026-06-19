@@ -5,6 +5,7 @@ use owo_colors::OwoColorize;
 use owo_colors::{Stream, Style};
 use std::{
     io::{self, IsTerminal, Write},
+    path::PathBuf,
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -14,8 +15,9 @@ use crate::bench_config::{
     max_chunk_bytes_in_list, validate_chunk_sizes,
 };
 use crate::speedtest::{
-    BenchMode, BenchOp, Connector, PassSummary, ProbeTargets, SpeedTest, drain_stats_channel,
-    live_sample_columns,
+    BenchMode, BenchOp, BenchmarkReport, Connector, PassSummary, ProbeTargets, ReportFormat,
+    SpeedTest, WRITE_MUTATION_WARNING, default_report_path, drain_stats_channel,
+    live_sample_columns, resolve_report_format, write_report_to_path,
 };
 
 /// Alias for [`DEFAULT_CHUNK_SIZES`].
@@ -92,9 +94,19 @@ pub struct CliArgs {
     #[arg(
         long,
         value_delimiter = ',',
-        help = "Optional override: comma-separated chunk sizes in bytes. If omitted, only the default 4–32 KiB set runs (same as the GUI defaults). When set, this list replaces the default entirely."
+        help = "Optional override: comma-separated chunk sizes in bytes, max 16 MiB each. If omitted, only the default 4–32 KiB set runs (same as the GUI defaults). When set, this list replaces the default entirely."
     )]
     pub sizes: Option<Vec<usize>>,
+
+    #[arg(long, help = "Optional report output path (.csv or .json).")]
+    pub output: Option<PathBuf>,
+
+    #[arg(
+        long,
+        value_enum,
+        help = "Report format when --output extension is missing or should be overridden."
+    )]
+    pub output_format: Option<ReportFormat>,
 }
 
 pub fn default_cli_args() -> CliArgs {
@@ -104,6 +116,8 @@ pub fn default_cli_args() -> CliArgs {
         duration: 10,
         mode: CliBenchMode::Read,
         sizes: None,
+        output: None,
+        output_format: None,
     }
 }
 
@@ -157,7 +171,17 @@ pub fn print_startup_help() {
     row(
         "--sizes <CSV_BYTES>",
         &default_chunk_sizes_csv(),
-        "optional override; replaces default list when set",
+        "optional override; replaces default list when set (max 16 MiB each)",
+    );
+    row(
+        "--output <PATH>",
+        "",
+        "optional report path (.csv or .json)",
+    );
+    row(
+        "--output-format <FMT>",
+        "",
+        "csv | json; overrides output extension",
     );
     row("-h, --help", "", "print clap help");
     row("-V, --version", "", "print version");
@@ -353,6 +377,8 @@ pub fn interactive_launch_cli_args() -> Result<CliArgs> {
                 duration,
                 mode,
                 sizes,
+                output: None,
+                output_format: None,
             })
         }
     }
@@ -361,10 +387,20 @@ pub fn interactive_launch_cli_args() -> Result<CliArgs> {
 pub async fn run_headless(args: CliArgs) -> Result<()> {
     let connector: Connector = args.connector.into();
     let bench_mode: BenchMode = args.mode.into();
+    let output_format = args.output_format;
     let duration_secs = args.duration;
     if !(1..=60).contains(&duration_secs) {
         bail!("duration must be between 1 and 60 seconds");
     }
+    let report_output = match args.output {
+        Some(path) => Some((resolve_report_format(output_format, &path)?, path)),
+        None => {
+            if output_format.is_some() {
+                bail!("--output-format requires --output");
+            }
+            None
+        }
+    };
 
     let sizes: Vec<usize> = match args.sizes {
         Some(s) => s,
@@ -402,6 +438,13 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
         "sizes".if_supports_color(so, |t| t.cyan()),
         format!("{sizes:?}").if_supports_color(so, |t| t.bright_white()),
     );
+    if bench_mode.needs_write_target() {
+        println!(
+            "{} {}",
+            "warning:".if_supports_color(so, |t| t.style(Style::new().yellow().bold())),
+            WRITE_MUTATION_WARNING.if_supports_color(so, |t| t.yellow()),
+        );
+    }
 
     let max_chunk = max_chunk_bytes_in_list(&sizes);
     let test = SpeedTest::new(connector, device, bench_mode, max_chunk)?;
@@ -409,8 +452,9 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
 
     let mut summaries = Vec::new();
     let mut first_block = true;
+    let mut run_error: Option<anyhow::Error> = None;
 
-    for &size in &sizes {
+    'passes: for &size in &sizes {
         for &op in test.bench_mode().ops_for_size() {
             if !first_block {
                 print_between_read_size_sections(so);
@@ -436,19 +480,117 @@ pub async fn run_headless(args: CliArgs) -> Result<()> {
                 .await
             });
 
-            test.run_test_with_size(op, size, Duration::from_secs(duration_secs), tx, None)
-                .await?;
+            let pass_result = test
+                .run_test_with_size(op, size, Duration::from_secs(duration_secs), tx, None)
+                .await;
 
-            let summary = print
-                .await
-                .map_err(|e| anyhow::anyhow!("printer task: {e}"))?;
-            summaries.push(summary);
+            match print.await {
+                Ok(summary) => summaries.push(summary),
+                Err(e) => {
+                    run_error = Some(anyhow::anyhow!("printer task: {e}"));
+                    break 'passes;
+                }
+            }
+
+            if let Err(e) = pass_result {
+                run_error = Some(e);
+                break 'passes;
+            }
         }
     }
 
+    restore_write_probe_after_run(so, &test);
+
+    if let Some(error) = run_error {
+        return Err(error);
+    }
+
     print_summary(&summaries);
+    let report = BenchmarkReport::new(
+        connector,
+        bench_mode,
+        duration_secs,
+        &sizes,
+        test.probe_targets(),
+        summaries,
+    );
+    if let Some((format, output_path)) = report_output {
+        write_report_to_path(&report, format, &output_path)?;
+        println!("Report written: {}", output_path.display());
+    } else {
+        prompt_report_export(&report)?;
+    }
 
     Ok(())
+}
+
+fn prompt_report_export(report: &BenchmarkReport) -> Result<()> {
+    let Some(format) = prompt_report_export_format()? else {
+        return Ok(());
+    };
+
+    let path = default_report_path(format);
+    write_report_to_path(report, format, &path)?;
+    println!("Report written: {}", path.display());
+    Ok(())
+}
+
+fn prompt_report_export_format() -> Result<Option<ReportFormat>> {
+    if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Ok(None);
+    }
+
+    loop {
+        print!(
+            "\n{} ",
+            "Export benchmark report? [n/csv/json]"
+                .if_supports_color(Stream::Stdout, |t| t.style(Style::new().cyan().bold())),
+        );
+        io::stdout().flush()?;
+
+        let mut line = String::new();
+        if io::stdin().read_line(&mut line)? == 0 {
+            return Ok(None);
+        }
+
+        match report_export_format_from_input(&line) {
+            Some(ReportExportAnswer::Skip) => return Ok(None),
+            Some(ReportExportAnswer::Format(format)) => return Ok(Some(format)),
+            None => eprintln!("Please enter n, csv, or json."),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ReportExportAnswer {
+    Skip,
+    Format(ReportFormat),
+}
+
+fn report_export_format_from_input(input: &str) -> Option<ReportExportAnswer> {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "" | "n" | "no" => Some(ReportExportAnswer::Skip),
+        "c" | "csv" => Some(ReportExportAnswer::Format(ReportFormat::Csv)),
+        "j" | "json" => Some(ReportExportAnswer::Format(ReportFormat::Json)),
+        _ => None,
+    }
+}
+
+fn restore_write_probe_after_run(so: Stream, test: &SpeedTest) {
+    if !test.bench_mode().needs_write_target() {
+        return;
+    }
+
+    match test.restore_write_target() {
+        Ok(()) => println!(
+            "{}",
+            "Write probe original bytes restored.".if_supports_color(so, |t| t.dimmed()),
+        ),
+        Err(e) => eprintln!(
+            "{} failed to restore write probe bytes: {e}",
+            "Warning:".if_supports_color(Stream::Stderr, |t| t.style(Style::new().yellow().bold())),
+        ),
+    }
 }
 
 fn print_colored_live_sample(sample: &crate::speedtest::BenchSample) {
@@ -473,7 +615,7 @@ fn print_summary(summaries: &[PassSummary]) {
     let groups = summary_groups(summaries);
     println!(
         "\n{}",
-        "Summary (averages over emitted samples):"
+        "Summary (weighted averages):"
             .if_supports_color(so, |t| t.style(Style::new().bright_blue().bold())),
     );
 
@@ -637,11 +779,19 @@ fn print_op_probe_detail(so: Stream, targets: &ProbeTargets, op: BenchOp, chunk_
     }
 }
 
-pub fn prompt_exit() -> Result<()> {
+pub fn prompt_exit(success: bool) -> Result<()> {
+    let status = if success {
+        "Benchmark finished."
+            .if_supports_color(Stream::Stdout, |t| t.style(Style::new().green().bold()))
+            .to_string()
+    } else {
+        "Benchmark failed."
+            .if_supports_color(Stream::Stdout, |t| t.style(Style::new().red().bold()))
+            .to_string()
+    };
     println!(
         "\n{} {}",
-        "Benchmark finished."
-            .if_supports_color(Stream::Stdout, |t| t.style(Style::new().green().bold())),
+        status,
         "Press Enter to exit.".if_supports_color(Stream::Stdout, |t| t.dimmed()),
     );
     io::stdout().flush()?;
@@ -726,14 +876,68 @@ mod tests {
         assert!(err.to_string().contains("chunk sizes must be positive"));
     }
 
+    #[tokio::test]
+    async fn run_headless_rejects_output_format_without_output_before_connecting() {
+        let args = CliArgs {
+            output_format: Some(ReportFormat::Json),
+            ..default_cli_args()
+        };
+
+        let err = run_headless(args).await.unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("--output-format requires --output")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_headless_rejects_unknown_output_extension_before_connecting() {
+        let args = CliArgs {
+            output: Some(PathBuf::from("report.txt")),
+            ..default_cli_args()
+        };
+
+        let err = run_headless(args).await.unwrap_err();
+        assert!(err.to_string().contains("could not infer report format"));
+    }
+
+    #[test]
+    fn report_export_prompt_input_maps_to_expected_choice() {
+        assert_eq!(
+            report_export_format_from_input(""),
+            Some(ReportExportAnswer::Skip)
+        );
+        assert_eq!(
+            report_export_format_from_input("no"),
+            Some(ReportExportAnswer::Skip)
+        );
+        assert_eq!(
+            report_export_format_from_input("csv"),
+            Some(ReportExportAnswer::Format(ReportFormat::Csv))
+        );
+        assert_eq!(
+            report_export_format_from_input("j"),
+            Some(ReportExportAnswer::Format(ReportFormat::Json))
+        );
+        assert_eq!(report_export_format_from_input("xml"), None);
+    }
+
     fn pass_summary(op: BenchOp, chunk_bytes: usize) -> PassSummary {
         PassSummary {
             op,
             chunk_bytes,
+            min_mib_s: 0.5,
             avg_mib_s: 1.0,
+            max_mib_s: 1.5,
+            min_ops_s: 1.0,
             avg_ops_s: 2.0,
+            max_ops_s: 3.0,
+            min_latency_us: 2.0,
             avg_latency_us: 3.0,
+            max_latency_us: 4.0,
             samples: 4,
+            total_ops: 8,
+            measured_secs: 4.0,
         }
     }
 

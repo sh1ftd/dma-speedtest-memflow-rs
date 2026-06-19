@@ -9,6 +9,9 @@ pub const DEFAULT_CHUNK_SIZES: [usize; 4] = [4096, 8192, 16384, 32768];
 /// All chunk sizes offered in the GUI size grid.
 pub const GUI_CHUNK_SIZES: [usize; 9] = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
 
+/// Largest accepted benchmark chunk (16 MiB).
+pub const MAX_CHUNK_SIZE_BYTES: usize = 16 * 1024 * 1024;
+
 pub fn default_gui_chunk_sizes() -> Vec<(usize, bool)> {
     GUI_CHUNK_SIZES
         .into_iter()
@@ -78,6 +81,9 @@ pub fn parse_chunk_sizes_csv(input: &str) -> Result<Vec<usize>> {
         if n == 0 {
             bail!("chunk sizes must be positive; got 0");
         }
+        if n > MAX_CHUNK_SIZE_BYTES {
+            bail!("chunk size {n} B exceeds maximum allowed size of {MAX_CHUNK_SIZE_BYTES} B");
+        }
         out.push(n);
     }
     validate_chunk_sizes(&out)?;
@@ -98,6 +104,13 @@ pub fn validate_chunk_sizes(sizes: &[usize]) -> Result<()> {
     }
     if sizes.contains(&0) {
         bail!("chunk sizes must be positive; got 0");
+    }
+    if let Some(max_size) = sizes
+        .iter()
+        .copied()
+        .find(|&size| size > MAX_CHUNK_SIZE_BYTES)
+    {
+        bail!("chunk size {max_size} B exceeds maximum allowed size of {MAX_CHUNK_SIZE_BYTES} B");
     }
     Ok(())
 }
@@ -142,7 +155,19 @@ mod tests {
     }
 
     #[test]
+    fn parse_chunk_sizes_csv_rejects_values_above_limit() {
+        let too_large = MAX_CHUNK_SIZE_BYTES + 1;
+        let err = parse_chunk_sizes_csv(&too_large.to_string()).unwrap_err();
+        assert!(err.to_string().contains("exceeds maximum allowed size"));
+    }
+
+    #[test]
     fn validate_chunk_sizes_rejects_direct_zero_values() {
         assert!(validate_chunk_sizes(&[4096, 0]).is_err());
+    }
+
+    #[test]
+    fn validate_chunk_sizes_rejects_direct_values_above_limit() {
+        assert!(validate_chunk_sizes(&[MAX_CHUNK_SIZE_BYTES + 1]).is_err());
     }
 }

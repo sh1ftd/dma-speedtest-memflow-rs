@@ -11,8 +11,10 @@ pub fn render_bench_mode_controls(ui: &mut egui::Ui, bench_mode: &mut BenchMode)
         ui.radio_value(bench_mode, BenchMode::Both, "Both");
     });
     ui.label(
-        egui::RichText::new("Write uses an auto-selected safe region (not configurable).")
-            .small()
-            .weak(),
+        egui::RichText::new(
+            "Write/both mutates target process memory at an auto-selected writable probe region; restore is best-effort.",
+        )
+        .small()
+        .weak(),
     );
 }

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use clap::Parser;
 use dma_speedtest_memflow_rs::cli::{
     CliArgs, ensure_stdio_for_headless, interactive_launch_cli_args, print_startup_help,
@@ -6,11 +5,39 @@ use dma_speedtest_memflow_rs::cli::{
 };
 use owo_colors::OwoColorize;
 use owo_colors::{Stream, Style};
+use std::process::ExitCode;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> ExitCode {
     ensure_stdio_for_headless();
 
+    let result = run_cli().await;
+    let success = result.is_ok();
+
+    if let Err(ref e) = result {
+        eprintln!(
+            "{} {e}",
+            "Error:".if_supports_color(Stream::Stderr, |t| t.style(Style::new().red().bold())),
+        );
+    }
+
+    // Always wait for Enter, even on failures (e.g. PCILeech init errors).
+    if let Err(e) = prompt_exit(success) {
+        eprintln!(
+            "{} {e}",
+            "Error:".if_supports_color(Stream::Stderr, |t| t.style(Style::new().red().bold())),
+        );
+        return ExitCode::FAILURE;
+    }
+
+    if success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+async fn run_cli() -> anyhow::Result<()> {
     let user_arg_count = std::env::args_os().skip(1).count();
 
     // Print help on startup when non-interactive so available flags are visible by default.
@@ -28,15 +55,5 @@ async fn main() -> Result<()> {
         }
         CliArgs::parse()
     };
-    let result = run_headless(args).await;
-    if let Err(ref e) = result {
-        eprintln!(
-            "{} {e}",
-            "Error:".if_supports_color(Stream::Stderr, |t| t.style(Style::new().red().bold())),
-        );
-    }
-
-    // Always wait for Enter, even on failures (e.g. PCILeech init errors).
-    prompt_exit()?;
-    result
+    run_headless(args).await
 }

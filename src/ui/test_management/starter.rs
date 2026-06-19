@@ -86,6 +86,7 @@ fn spawn_test_runner(
             }
 
             let test_duration = Duration::from_secs(duration);
+            let mut run_error = None;
             for size in test_sizes {
                 if test.is_cancelled() {
                     break;
@@ -100,9 +101,14 @@ fn spawn_test_runner(
                     )
                     .await
                 {
-                    handle_test_error(&console, e, &modal_tx);
-                    return;
+                    run_error = Some(e);
+                    break;
                 }
+            }
+
+            restore_write_probe_after_run(&console, &test);
+            if let Some(e) = run_error {
+                handle_test_error(&console, e, &modal_tx);
             }
         });
     });
@@ -134,4 +140,18 @@ fn handle_test_error(console: &ConsoleWindow, error: anyhow::Error, modal_tx: &S
     let error_msg = format!("Test error: {error}");
     log_to_console(console, &error_msg);
     let _ = modal_tx.send(error_msg);
+}
+
+fn restore_write_probe_after_run(console: &ConsoleWindow, test: &SpeedTest) {
+    if !test.bench_mode().needs_write_target() {
+        return;
+    }
+
+    match test.restore_write_target() {
+        Ok(()) => log_to_console(console, "Write probe original bytes restored."),
+        Err(e) => log_to_console(
+            console,
+            &format!("Warning: failed to restore write probe bytes: {e}"),
+        ),
+    }
 }

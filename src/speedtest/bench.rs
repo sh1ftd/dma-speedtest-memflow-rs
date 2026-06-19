@@ -24,7 +24,8 @@ impl BenchMode {
 }
 
 /// Single benchmark operation (read or write).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum BenchOp {
     Read,
     Write,
@@ -46,8 +47,18 @@ impl BenchOp {
     }
 }
 
-/// Live stats: `(op, throughput_mib_s, ops_per_sec, elapsed_secs, chunk_size, latency_us)`.
-pub type BenchStats = (BenchOp, f64, u64, f64, usize, f64);
+/// Live stats emitted for one benchmark update interval.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BenchStats {
+    pub op: BenchOp,
+    pub chunk_bytes: usize,
+    pub elapsed_secs: f64,
+    pub interval_secs: f64,
+    pub ops: u64,
+    pub throughput_mib_s: f64,
+    pub ops_per_sec: u64,
+    pub latency_us: f64,
+}
 
 #[cfg(test)]
 mod tests {

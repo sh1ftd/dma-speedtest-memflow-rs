@@ -16,6 +16,8 @@ pub fn render_results_panel(
     on_stop_test: impl FnOnce(),
     on_test_again: impl FnOnce(),
     on_toggle_console: &mut bool,
+    on_export_csv: &mut bool,
+    on_export_json: &mut bool,
 ) {
     ui.vertical_centered(|ui| {
         ui.add_space(5.0);
@@ -121,9 +123,41 @@ pub fn render_results_panel(
                         if ui.add_sized([190.0, 40.0], back_button).clicked() {
                             *params.show_config = true;
                         }
+
+                        ui.add_space(8.0);
+
+                        let csv_button = egui::Button::new(
+                            egui::RichText::new(format!("{FLOPPY_DISK} CSV"))
+                                .color(egui::Color32::BLACK),
+                        )
+                        .fill(egui::Color32::from_rgb(52, 152, 219))
+                        .stroke(egui::Stroke::new(
+                            2.0_f32,
+                            egui::Color32::from_rgb(41, 128, 185),
+                        ));
+                        if ui.add_sized([100.0, 40.0], csv_button).clicked() {
+                            *on_export_csv = true;
+                        }
+
+                        ui.add_space(8.0);
+
+                        let json_button = egui::Button::new(
+                            egui::RichText::new(format!("{FLOPPY_DISK} JSON"))
+                                .color(egui::Color32::BLACK),
+                        )
+                        .fill(egui::Color32::from_rgb(155, 89, 182))
+                        .stroke(egui::Stroke::new(
+                            2.0_f32,
+                            egui::Color32::from_rgb(142, 68, 173),
+                        ));
+                        if ui.add_sized([110.0, 40.0], json_button).clicked() {
+                            *on_export_json = true;
+                        }
                     }
                 });
             });
+
+            render_report_export_status(ui, params);
         });
 
     ui.add_space(10.0);
@@ -163,5 +197,28 @@ pub fn render_results_panel(
                 render_results_table(ui, table_id, params.results, metric, title);
             });
         }
+    });
+}
+
+fn render_report_export_status(ui: &mut egui::Ui, params: &ResultsPanelParams<'_>) {
+    let Some(status) = params.test_state.report_export_status else {
+        return;
+    };
+    if params.test_state.test_end_time.is_none() {
+        return;
+    }
+
+    ui.add_space(8.0);
+    ui.horizontal_wrapped(|ui| {
+        let (icon, color) = if status.is_error {
+            (WARNING, egui::Color32::from_rgb(231, 76, 60))
+        } else {
+            (CHECK, egui::Color32::from_rgb(46, 204, 113))
+        };
+        ui.label(
+            egui::RichText::new(format!("{icon} {}", status.message))
+                .color(color)
+                .strong(),
+        );
     });
 }

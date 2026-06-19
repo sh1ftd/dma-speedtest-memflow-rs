@@ -1,7 +1,9 @@
 use super::super::test_management::{start_connect, start_test_from_connected};
 
 use super::state::SpeedTestApp;
+use crate::speedtest::{BenchmarkReport, ReportFormat, default_report_path, write_report_to_path};
 use crate::ui::console::log_to_console;
+use crate::ui::types::ReportExportStatus;
 
 impl SpeedTestApp {
     pub fn start_test_impl(&mut self) {
@@ -26,7 +28,9 @@ impl SpeedTestApp {
         self.test_end_time = None;
         self.current_test_size = None;
         self.completed_chunks.clear();
+        self.pass_aggregators.clear();
         self.last_console_stats_log = None;
+        self.report_export_status = None;
 
         let bench_mode = self.bench_mode;
         let max_chunk = crate::bench_config::max_enabled_chunk_bytes(&self.test_sizes);
@@ -125,7 +129,6 @@ impl SpeedTestApp {
 
         self.is_running = false;
         self.test = None;
-        self.probe_targets = None;
         self.stats_rx = None;
 
         if let Some(overall_start_time) = self.overall_test_start_time {
@@ -177,6 +180,56 @@ impl SpeedTestApp {
                 self.bench_done_rx = None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
+        }
+    }
+
+    pub fn export_report_impl(&mut self, format: ReportFormat) {
+        let Some(probes) = self.probe_targets else {
+            let message = "No probe metadata available for report export.";
+            self.report_export_status = Some(ReportExportStatus::error(message));
+            log_to_console(&self.console, message);
+            return;
+        };
+
+        let summaries = self
+            .pass_aggregators
+            .iter()
+            .map(crate::speedtest::PassAggregator::summary)
+            .collect::<Vec<_>>();
+
+        if summaries.is_empty() {
+            let message = "No benchmark samples available for report export.";
+            self.report_export_status = Some(ReportExportStatus::error(message));
+            log_to_console(&self.console, message);
+            return;
+        }
+
+        let sizes = self
+            .test_sizes
+            .iter()
+            .filter_map(|(size, enabled)| (*enabled).then_some(*size))
+            .collect::<Vec<_>>();
+        let report = BenchmarkReport::new(
+            self.connector,
+            self.bench_mode,
+            self.duration,
+            &sizes,
+            probes,
+            summaries,
+        );
+        let path = default_report_path(format);
+
+        match write_report_to_path(&report, format, &path) {
+            Ok(()) => {
+                let message = format!("Report saved: {}", path.display());
+                self.report_export_status = Some(ReportExportStatus::success(message.clone()));
+                log_to_console(&self.console, &message);
+            }
+            Err(e) => {
+                let message = format!("Report export failed: {e}");
+                self.report_export_status = Some(ReportExportStatus::error(message.clone()));
+                log_to_console(&self.console, &message);
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ use memflow::prelude::v1::*;
 pub const TARGET_PROCESS: &str = "explorer.exe";
 pub const TARGET_READ_MODULE: &str = "ntdll.dll";
 pub const WRITE_PAYLOAD_DESC: &str = "rotating bytes (buffer[i] = i % 251)";
+pub const WRITE_MUTATION_WARNING: &str = "Write/both mode mutates target process memory at the auto-selected writable probe region; original probe bytes are restored best-effort after the run.";
 pub const WRITE_CANARY_BYTES: usize = 64;
 
 #[derive(Clone, Copy, Debug)]
@@ -65,6 +66,7 @@ impl ProbeTargets {
                 "Write probe: auto-selected private writable region @ {}",
                 Self::format_va(addr)
             ));
+            lines.push(format!("  Warning: {WRITE_MUTATION_WARNING}"));
             lines.push(format!(
                 "  Region size: {}  (VA [{}, {}))",
                 format_byte_count(region as usize),
@@ -103,7 +105,7 @@ impl ProbeTargets {
         let addr = self.write_addr?;
         let region = self.write_region_bytes?;
         Some(format!(
-            "DMA write {chunk} -> {addr} (inside {region} writable region); {WRITE_PAYLOAD_DESC}",
+            "DMA write {chunk} -> {addr} (inside {region} auto-selected writable probe region); {WRITE_PAYLOAD_DESC}",
             chunk = format_byte_count(chunk_bytes),
             addr = Self::format_va(addr),
             region = format_byte_count(region as usize),
@@ -139,6 +141,23 @@ mod tests {
             lines
                 .iter()
                 .any(|line| line.contains("128 KiB (131072 B) write-read canary"))
+        );
+    }
+
+    #[test]
+    fn write_connect_details_warn_about_mutating_memory() {
+        let targets = ProbeTargets::new(
+            Address::from(0x1000_u64),
+            Some(Address::from(0x2000_u64)),
+            Some(128 * 1024),
+        );
+
+        let lines = targets.connect_detail_lines();
+
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("mutates target process memory"))
         );
     }
 }

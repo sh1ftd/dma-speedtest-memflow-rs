@@ -30,6 +30,28 @@ pub type SizeResults = (BenchOp, usize, MetricData);
 /// Type alias for test results storage
 pub type TestResults = Arc<Mutex<Vec<SizeResults>>>;
 
+#[derive(Debug, Clone)]
+pub struct ReportExportStatus {
+    pub message: String,
+    pub is_error: bool,
+}
+
+impl ReportExportStatus {
+    pub fn success(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            is_error: false,
+        }
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            is_error: true,
+        }
+    }
+}
+
 pub struct ConfigParams<'a> {
     pub connector: &'a mut crate::speedtest::Connector,
     pub pcileech_device: &'a mut String,
@@ -59,6 +81,7 @@ pub struct TestState<'a> {
     pub test_start_time: Option<std::time::Instant>,
     pub test_end_time: Option<f64>,
     pub completed_chunks: &'a [(BenchOp, usize, f64)],
+    pub report_export_status: Option<&'a ReportExportStatus>,
 }
 
 pub struct PlotControls<'a> {
@@ -79,6 +102,7 @@ pub struct StatsUpdateParams<'a> {
     pub max_throughput: &'a mut f64,
     pub completed_chunks: &'a mut Vec<(BenchOp, usize, f64)>,
     pub last_console_stats_log: &'a mut Option<std::time::Instant>,
+    pub pass_aggregators: &'a mut Vec<crate::speedtest::PassAggregator>,
 }
 
 pub struct ResultsPanelParams<'a> {
